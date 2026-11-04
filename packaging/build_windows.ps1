@@ -44,26 +44,32 @@ $odmSha = (Get-FileHash $odmExe -Algorithm SHA256).Hash.ToLower()
 Write-Host "   $($rel.tag_name)  sha256 $odmSha"
 
 Step "4/7 Inno Setup compiler"
-$iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
+$isccPaths = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+               "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")
+$iscc = $isccPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) {
-    if (Get-Command choco -ErrorAction SilentlyContinue) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install --id JRSoftware.InnoSetup -e --silent --accept-package-agreements --accept-source-agreements | Out-Null
+    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
         choco install innosetup -y --no-progress | Out-Null
     } else {
         $is = "build\innosetup.exe"
         Invoke-WebRequest "https://jrsoftware.org/download.php/is.exe" -OutFile $is -Headers $headers
         Start-Process $is -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait
     }
-    $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") |
-            Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $iscc) { throw "Inno Setup could not be installed" }
+    $iscc = $isccPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $iscc) { throw "Inno Setup could not be installed - install Inno Setup 6 from jrsoftware.org and rerun" }
 }
 
 $testResult = "skipped"
 if (-not $SkipTests) {
     Step "5/7 Automated tests"
+    # Windows PowerShell 5.1 turns redirected stderr into errors; relax while the tests run
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     & $py -m pytest -q -W ignore tests 2>&1 | Tee-Object -FilePath build\pytest.log
-    $testResult = if ($LASTEXITCODE -eq 0) { "passed" } else { "FAILED" }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $old
+    $testResult = if ($code -eq 0) { "passed" } else { "FAILED" }
     Write-Host "   tests: $testResult"
 }
 

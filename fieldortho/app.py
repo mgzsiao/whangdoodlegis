@@ -5,9 +5,21 @@ import os
 import sys
 
 
+def _set_gis_data():
+    """Frozen conda-forge build: GDAL and PROJ are shared by rasterio, pyogrio and pyproj, and
+    their data is bundled in share/. (pip-wheel builds carry their own data; nothing to do.)"""
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+        for var, sub in (("GDAL_DATA", ("share", "gdal")), ("PROJ_DATA", ("share", "proj"))):
+            p = os.path.join(base, *sub)
+            if os.path.isdir(p):
+                os.environ[var] = p
+                if var == "PROJ_DATA":
+                    os.environ["PROJ_LIB"] = p
+
+
 def main() -> int:
-    # rasterio, pyogrio and pyproj each find their own bundled GDAL/PROJ data (also when
-    # frozen). Do not set PROJ_DATA globally: their PROJ versions can differ.
+    _set_gis_data()
 
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication

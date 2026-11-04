@@ -11,7 +11,7 @@
 
 #define MyAppName "FieldOrtho"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0"
+  #define MyAppVersion "0.2.1"
 #endif
 #define MyAppExe "FieldOrtho.exe"
 #ifndef ODM_URL

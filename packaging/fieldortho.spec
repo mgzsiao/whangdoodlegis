@@ -8,6 +8,13 @@ datas = [(os.path.join(ROOT, "fieldortho", "resources"), "fieldortho/resources")
 datas += collect_data_files("rasterio")     # gdal_data, proj_data
 datas += collect_data_files("pyproj")
 datas += collect_data_files("pyogrio")      # GDAL/PROJ data for vector export
+# conda-forge builds: rasterio, pyogrio and pyproj share one GDAL/PROJ whose data lives in
+# <env>/Library/share - bundle it as share/gdal and share/proj (app.py points GDAL at it)
+import sys as _sys
+_share = os.path.join(_sys.prefix, "Library", "share")
+for _sub in ("gdal", "proj"):
+    if os.path.isdir(os.path.join(_share, _sub)):
+        datas.append((os.path.join(_share, _sub), os.path.join("share", _sub)))
 geoid = os.path.join(ROOT, "data", "us_nga_egm96_15.tif")
 if os.path.exists(geoid):
     datas.append((geoid, "data"))
