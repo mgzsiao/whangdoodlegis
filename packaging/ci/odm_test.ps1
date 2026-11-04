@@ -10,6 +10,8 @@ Get-ChildItem C:\data\aukerman\images\*.JPG | Sort-Object Name | Select-Object -
 $jobs = "C:\ci\FieldOrtho Jobs"
 $t0 = Get-Date
 $app = "$env:ProgramFiles\FieldOrtho\fieldortho-cli.exe"
+# Windows PowerShell 5.1 turns native stderr into errors under "Stop"; judge by exit code instead
+$ErrorActionPreference = "Continue"
 & $app process C:\ci\photos --name "Aukerman test" --preset $Preset --jobs-root $jobs 2>&1 |
     Tee-Object -FilePath C:\ci_logs\odm_cli.txt
 $code = $LASTEXITCODE

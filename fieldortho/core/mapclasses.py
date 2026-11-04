@@ -80,9 +80,10 @@ def classify(rgb: np.ndarray, preset: Preset, region: np.ndarray | None = None,
     img = rgb.astype(np.int16)
     best_d = np.full((H, W), 1e9, dtype=np.float32)
     codes = np.zeros((H, W), dtype=np.uint8)
+    img32 = img.astype(np.int32)   # squared channel differences reach 65025: int16 would wrap
     for mc in preset.classes:
         for col in mc.colors:
-            d = np.sqrt(((img - np.array(col, dtype=np.int16)) ** 2).sum(axis=2, dtype=np.int32)).astype(np.float32)
+            d = np.sqrt(((img32 - np.array(col, dtype=np.int32)) ** 2).sum(axis=2)).astype(np.float32)
             better = d < best_d
             best_d[better] = d[better]
             codes[better] = mc.code

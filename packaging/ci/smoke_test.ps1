@@ -25,6 +25,9 @@ Check "geoid grid bundled" (Test-Path "$app\_internal\data\us_nga_egm96_15.tif")
 Check "engine downloaded and installed (C:\ODM\run.bat)" (Test-Path "C:\ODM\run.bat")
 Check "start menu shortcut" (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\FieldOrtho\FieldOrtho.lnk")
 
+# Windows PowerShell 5.1 turns native stderr (e.g. Python warnings) into errors under "Stop";
+# relax it for the native calls and judge them by exit code + output instead
+$ErrorActionPreference = "Continue"
 $out = & "$app\fieldortho-cli.exe" engine 2>&1 | Out-String
 $out | Set-Content C:\ci_logs\cli_engine.txt
 Check "app finds the engine" ($LASTEXITCODE -eq 0) $out.Trim()
@@ -35,6 +38,7 @@ $out = & "$app\fieldortho-cli.exe" georef tests\data\maps\poblacion_landslide.jp
 $out | Set-Content C:\ci_logs\cli_georef.txt
 $rmse = if ($out -match "RMSE ([0-9.]+) m") { [double]$Matches[1] } else { 999 }
 Check "georeferencer (installed app)" (($LASTEXITCODE -eq 0) -and ($rmse -lt 1.0)) "RMSE $rmse m"
+$ErrorActionPreference = "Stop"
 Check "georef GeoTIFF + polygons written" ((Test-Path "$geo\poblacion_landslide_georef.tif") -and (Test-Path "$geo\poblacion_landslide_classes.gpkg"))
 
 # GUI must start and stay up (catches missing DLLs / Qt plugins)
