@@ -61,6 +61,12 @@ build script, CI test scripts), `data/us_nga_egm96_15.tif` (EGM96 geoid, already
 - The installers are unsigned → SmartScreen warning ("More info → Run anyway"). Code signing needs a certificate the owner does not have.
 - ODM is launched as `cmd.exe /s /c ""C:\ODM\run.bat" "<job dir>" args"` (engine.py) so job folders
   with spaces work. Keep that form.
+- ODM 3.6.2 itself runs its SMRF ground classification with an *unquoted* path (opendm/dem/pdal.py),
+  so a job folder with spaces silently gets no ground points and the DTM stage fails ("bad allocation").
+  `engine.space_free_alias()` therefore hands ODM a space-free directory junction under
+  `C:\ProgramData\FieldOrtho\odm\` pointing at the job folder (removed after the run).
+- ODM's win32env.bat restores PATH from `_OLD_VIRTUAL_PATH` (left by an activated Python venv), which
+  breaks ODM's DLL loading; `engine.engine_env()` strips such variables for the ODM child process.
 - Frozen app data: pip wheels of rasterio/pyogrio/pyproj each carry their own GDAL/PROJ data; do NOT
   set PROJ_DATA globally for a pip build (`app._set_gis_data()` only acts if `share\gdal` exists,
   which is the conda-forge build case).

@@ -118,6 +118,45 @@ def engine_env(base: dict | None = None) -> dict:
     return env
 
 
+def space_free_alias(project_dir: str, base: str | None = None) -> str | None:
+    """Windows only: a directory junction without spaces that points at project_dir.
+
+    Some ODM command lines are built without quoting (ODM 3.6.2: the SMRF ground
+    classification in opendm/dem/pdal.py runs `pdal translate -i <path>` unquoted). With a job
+    folder such as 'Documents\\FieldOrtho Jobs' that step fails, no ground points are found and
+    the DTM stage crashes. ODM therefore gets this alias instead of the real folder; everything
+    it writes lands in the real job folder. Junctions need no admin rights.
+    Returns None (use the real path) if no alias is needed or it cannot be made."""
+    if not IS_WINDOWS or " " not in project_dir:
+        return None
+    import hashlib
+    base = base or os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "FieldOrtho", "odm")
+    if " " in base:
+        return None
+    target = os.path.abspath(project_dir)
+    alias = os.path.join(base, hashlib.sha1(os.path.normcase(target).encode("utf-8")).hexdigest()[:12])
+    try:
+        os.makedirs(base, exist_ok=True)
+        if os.path.lexists(alias):
+            if os.path.normcase(os.path.realpath(alias)) == os.path.normcase(os.path.realpath(target)):
+                return alias
+            os.rmdir(alias)                      # stale junction: removes the link only
+        import _winapi
+        _winapi.CreateJunction(target, alias)
+        return alias
+    except OSError:
+        return None
+
+
+def remove_alias(alias: str | None):
+    """Remove a junction made by space_free_alias (the link only, never the job's files)."""
+    if alias and os.path.lexists(alias):
+        try:
+            os.rmdir(alias)
+        except OSError:
+            pass
+
+
 def build_command(info: EngineInfo, project_dir: str, args: list[str]):
     """Command to launch ODM. On Windows with run.bat this is a single command-line string:
     cmd /s /c ""C:\\ODM\\run.bat" "C:\\path with spaces\\job" --args"  (the /s form keeps the
@@ -202,6 +241,7 @@ class OdmRunner:
         self.info = info
         self.project_dir = os.path.abspath(project_dir)
         self.project_name = os.path.basename(self.project_dir)
+        self._names = {self.project_name}   # names ODM may report progress under
         self.args = args
         self.on_line = on_line or (lambda s: None)
         self.on_progress = on_progress or (lambda p, s: None)
@@ -245,7 +285,7 @@ class OdmRunner:
             parts = data.decode("utf8", "ignore").split("/")
             if len(parts) >= 4 and parts[0] == "PGUP":
                 name, value = "/".join(parts[2:-1]), parts[-1]
-                if name == self.project_name or os.path.basename(name) == self.project_name:
+                if name in self._names or os.path.basename(name) in self._names:
                     try:
                         self._set_progress(float(value))
                     except ValueError:
@@ -263,8 +303,22 @@ class OdmRunner:
 
     def run(self) -> RunResult:
         """Blocking run. Call from a worker thread."""
+        alias = space_free_alias(self.project_dir) if self.info.mode == "native" else None
+        if not alias:
+            return self._run(self.project_dir, self.args)
+        # ODM sees the space-free alias; file arguments inside the job folder are mapped onto it
+        real = os.path.normcase(self.project_dir)
+        args = [alias + a[len(real):] if os.path.normcase(a).startswith(real + os.sep) else a
+                for a in self.args]
+        self._names.add(os.path.basename(alias))
+        try:
+            return self._run(alias, args)
+        finally:
+            remove_alias(alias)
+
+    def _run(self, run_dir: str, run_args: list[str]) -> RunResult:
         t0 = time.time()
-        cmd = build_command(self.info, self.project_dir, self.args)
+        cmd = build_command(self.info, run_dir, run_args)
         env = engine_env()
         log = open(self.log_path, "a", encoding="utf-8") if self.log_path else None
         if log:

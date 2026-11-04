@@ -3,6 +3,7 @@
 command line (tests/fake_odm) because the real engine is installed separately."""
 import os
 import shutil
+import sys
 
 import numpy as np
 import pytest
@@ -151,6 +152,25 @@ def test_engine_path_is_absolute(monkeypatch):
     monkeypatch.chdir(os.path.dirname(FAKE_ODM))
     info = engine.detect("fake_odm")
     assert info.ok and os.path.isabs(info.path)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows junctions")
+def test_space_free_alias_for_odm(tmp_path):
+    """ODM 3.6.2 runs some tools with unquoted paths; job folders with spaces get a junction."""
+    job = tmp_path / "FieldOrtho Jobs" / "My job (2)"
+    job.mkdir(parents=True)
+    (job / "keep.txt").write_text("x")
+    base = str(tmp_path / "aliases")
+    assert engine.space_free_alias(str(tmp_path / "nospace"), base) is None
+    alias = engine.space_free_alias(str(job), base)
+    assert alias and " " not in alias
+    assert engine.space_free_alias(str(job), base) == alias          # reused, stable name
+    with open(os.path.join(alias, "odm_out.txt"), "w") as f:         # writes land in the job
+        f.write("y")
+    assert (job / "odm_out.txt").read_text() == "y"
+    engine.remove_alias(alias)
+    assert not os.path.lexists(alias)
+    assert (job / "keep.txt").exists() and (job / "odm_out.txt").exists()
 
 
 def test_engine_env_drops_venv_leftovers():
