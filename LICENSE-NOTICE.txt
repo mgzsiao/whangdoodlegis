@@ -1,0 +1,20 @@
+FieldOrtho - offline drone mapping, map georeferencing and hazard scenarios
+=========================================================================
+
+FieldOrtho itself
+-----------------
+Copyright (c) FieldOrtho authors. Provided "as is", without warranty of any kind.
+Flood and landslide results are screening scenarios, not engineering designs.
+
+Third-party software included or installed
+------------------------------------------
+- OpenDroneMap (ODM) - GNU Affero General Public License v3.0.
+  FieldOrtho runs ODM as a separate program. Source code: https://github.com/OpenDroneMap/ODM
+  The ODM installer adds its own license files under C:\ODM\licenses.
+- Qt / PySide6 - GNU LGPL v3 (https://www.qt.io, https://wiki.qt.io/Qt_for_Python).
+- GDAL / PROJ (via rasterio and pyogrio) - MIT / X11 style licences.
+- rasterio, pyogrio, shapely, pyproj, numpy, scipy, Pillow, contourpy, pyshp -
+  BSD / MIT / HPND style licences.
+- EGM96 geoid grid (us_nga_egm96_15.tif) from the PROJ-data project - public domain (US NGA).
+
+By installing you accept these licences.

@@ -1,0 +1,130 @@
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      engine_test:
+        description: "Run a real OpenDroneMap processing test"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 300
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      FIELDORTHO_TEST_PHOTOS: C:\data\aukerman\images
+      FAKE_ODM_ORTHO: C:\data\aukerman\aukerman.png
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Public test photos (OpenDroneMap aukerman dataset)
+        shell: pwsh
+        run: git clone --depth 1 https://github.com/OpenDroneMap/odm_data_aukerman C:\data\aukerman
+
+      - name: Build installers (downloads all resources, runs tests)
+        id: build
+        shell: pwsh
+        run: ./packaging/build_windows.ps1 -Python python
+
+      - name: Install test (silent install + engine download + app checks)
+        id: smoke
+        if: steps.build.outcome == 'success'
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: ""
+        run: ./packaging/ci/smoke_test.ps1
+
+      - name: Real OpenDroneMap processing test
+        id: odm
+        if: steps.smoke.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.engine_test)
+        timeout-minutes: 150
+        shell: pwsh
+        run: ./packaging/ci/odm_test.ps1 -Photos 30 -Preset standard
+
+      - name: Choose release files
+        id: files
+        if: always() && steps.build.outcome == 'success'
+        shell: pwsh
+        run: |
+          $f = @((Get-ChildItem dist\FieldOrtho_Setup_*_Online.exe).FullName, "dist\build-info.json")
+          $off = Get-ChildItem dist\FieldOrtho_Setup_*_Offline.exe -ErrorAction SilentlyContinue
+          if ($off -and $off.Length -lt 2000MB) { $f += $off.FullName }
+          elseif ($off) { Write-Host "Offline installer is over GitHub's 2 GB release limit - kept as a build artifact only." }
+          "list<<EOF" >> $env:GITHUB_OUTPUT
+          ($f -join "`n") >> $env:GITHUB_OUTPUT
+          "EOF" >> $env:GITHUB_OUTPUT
+          $v = (Get-Content dist\build-info.json | ConvertFrom-Json).version
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Publish release
+        if: always() && steps.build.outcome == 'success' && steps.smoke.outcome == 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && format('FieldOrtho {0}', github.ref_name) || format('FieldOrtho {0} (build {1})', steps.files.outputs.version, github.run_number) }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          target_commitish: ${{ github.sha }}
+          files: ${{ steps.files.outputs.list }}
+          body: |
+            **Which file?**
+            - `FieldOrtho_Setup_*_Online.exe` - small; downloads the OpenDroneMap engine during setup (internet needed once).
+            - `FieldOrtho_Setup_*_Offline.exe` - everything included; install on computers without internet.
+
+            Tests on Windows for this build: install test **${{ steps.smoke.outcome }}**, real OpenDroneMap test **${{ steps.odm.outcome }}**.
+            Windows may show "Windows protected your PC" because the installer is not code-signed: click *More info* > *Run anyway*.
+
+      - name: Keep installers as build artifacts
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FieldOrtho-installers
+          path: |
+            dist/FieldOrtho_Setup_*.exe
+            dist/build-info.json
+          retention-days: 30
+
+      - name: Report status to the ci-status branch
+        if: always()
+        shell: pwsh
+        run: |
+          $d = "C:\ci_status"
+          New-Item -ItemType Directory -Force $d, C:\ci_logs | Out-Null
+          $lines = @(
+            "# Build ${{ github.run_number }} - $(Get-Date -Format s)",
+            "commit ${{ github.sha }}",
+            "",
+            "| step | outcome |", "|---|---|",
+            "| build + tests | ${{ steps.build.outcome }} |",
+            "| install test | ${{ steps.smoke.outcome }} |",
+            "| real ODM test | ${{ steps.odm.outcome }} |"
+          )
+          $lines | Set-Content "$d\STATUS.md" -Encoding UTF8
+          foreach ($f in @("dist\build-info.json", "build\pytest.log")) { if (Test-Path $f) { Copy-Item $f $d } }
+          Get-ChildItem C:\ci_logs -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-Content $_.FullName -Tail 400 -ErrorAction SilentlyContinue | Set-Content (Join-Path $d $_.Name) -Encoding UTF8
+          }
+          Set-Location $d
+          git init -q -b ci-status
+          git config user.name "fieldortho-ci"
+          git config user.email "fieldortho-ci@users.noreply.github.com"
+          git add -A
+          git commit -q -m "CI build ${{ github.run_number }}: build=${{ steps.build.outcome }} install=${{ steps.smoke.outcome }} odm=${{ steps.odm.outcome }}"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" ci-status
