@@ -1,6 +1,8 @@
 """'Export...' for a processed drone job: any layer, any format, any CRS."""
 from __future__ import annotations
 
+from .. import APP_NAME
+
 import os
 import shutil
 import tempfile
@@ -145,7 +147,7 @@ def export_job(job, req: ExportRequest, progress: Callable[[float, str], None] |
                     notes.append(n)
         readme = f"{prefix}_EXPORT_README.txt"
         written = list(dict.fromkeys(written))
-        ex.write_export_readme(readme, f"FieldOrtho export - {job.name}", req.crs, lonlat, written, notes)
+        ex.write_export_readme(readme, f"{APP_NAME} export - {job.name}", req.crs, lonlat, written, notes)
         written.append(readme)
         progress(100.0, "Export finished")
         return written

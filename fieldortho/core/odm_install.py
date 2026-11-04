@@ -1,6 +1,6 @@
 """Download and install the OpenDroneMap engine from inside the app (needs internet once).
 
-Used when FieldOrtho was installed with the small 'online' installer on a computer that
+Used when WangDoodletheGIS was installed with the small 'online' installer on a computer that
 was offline at the time, or when the engine was removed. The official ODM Windows setup
 is run silently into C:\\ODM (it does not need administrator rights).
 """
@@ -18,7 +18,7 @@ from .system import IS_WINDOWS
 
 API = "https://api.github.com/repos/OpenDroneMap/ODM/releases/latest"
 DEFAULT_DIR = r"C:\ODM"
-UA = {"User-Agent": "FieldOrtho-installer"}
+UA = {"User-Agent": "WangDoodletheGIS-installer"}
 
 
 def latest_release(timeout: float = 20) -> dict:

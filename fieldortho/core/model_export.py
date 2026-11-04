@@ -1,6 +1,8 @@
 """Exporting flood and landslide model results in any format / CRS."""
 from __future__ import annotations
 
+from .. import APP_NAME
+
 import os
 import shutil
 import tempfile
@@ -56,7 +58,7 @@ def export_flood(dem: Dem, res: flood.FloodResult, out_dir: str, name: str, crs:
                 if n and n not in notes:
                     notes.append(n)
         readme = base + "_README.txt"
-        ex.write_export_readme(readme, f"FieldOrtho flood scenario - {name}", crs, ll, files, [n for n in notes if n])
+        ex.write_export_readme(readme, f"{APP_NAME} flood scenario - {name}", crs, ll, files, [n for n in notes if n])
         return files + [readme]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -95,7 +97,7 @@ def export_landslide(dem: Dem, res: landslide.LandslideResult, p: landslide.Para
                  "Infinite-slope stability + energy-line (travel angle) runout. Scenario model, not a "
                  "geotechnical design."]
         readme = base + "_README.txt"
-        ex.write_export_readme(readme, f"FieldOrtho landslide scenario - {name}", crs, ll, files, notes)
+        ex.write_export_readme(readme, f"{APP_NAME} landslide scenario - {name}", crs, ll, files, notes)
         return files + [readme]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

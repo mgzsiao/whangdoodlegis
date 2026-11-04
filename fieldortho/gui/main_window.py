@@ -6,9 +6,9 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-                               QStackedWidget, QVBoxLayout, QWidget)
+                               QPushButton, QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, __version__
+from .. import APP_NAME, AUTHOR, DISCLAIMER, DISCLAIMER_SHORT, __version__
 from ..core import engine, jobs, photos as ph
 from ..core.settings import Settings
 from .dialogs import GcpDialog, SettingsDialog
@@ -56,6 +56,15 @@ class MainWindow(QMainWindow):
             sl.addWidget(lab)
             self.step_labels.append(lab)
         sl.addStretch(1)
+        credit = QLabel(f"Version {__version__}\n{DISCLAIMER_SHORT}")
+        credit.setObjectName("Muted")
+        credit.setWordWrap(True)
+        credit.setStyleSheet("font-size: 11px;")
+        sl.addWidget(credit)
+        about = QPushButton("About")
+        about.setObjectName("Link")
+        about.clicked.connect(self.show_about)
+        sl.addWidget(about, 0, Qt.AlignLeft)
         lay.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
@@ -78,6 +87,7 @@ class MainWindow(QMainWindow):
         self.home.new_job.connect(self.new_job)
         self.home.open_job.connect(self.open_job)
         self.home.open_settings.connect(self.open_settings)
+        self.home.about.connect(self.show_about)
         self.home.open_georef.connect(lambda: self.show_page(self.georef))
         self.home.open_models.connect(lambda: self.show_page(self.models))
         self.georef.home.connect(self.show_home)
@@ -134,6 +144,13 @@ class MainWindow(QMainWindow):
         self.photos.folder.setText("-")
         self.photos.status.setText("")
         self.show_page(self.photos)
+
+    def show_about(self):
+        QMessageBox.about(self, f"About {APP_NAME}",
+                          f"<h3>{APP_NAME} {__version__}</h3><p>Developed by {AUTHOR}.</p>"
+                          f"<p>{DISCLAIMER.replace(f'Developed by {AUTHOR}. ', '')}</p>"
+                          "<p>Processing engine: OpenDroneMap (AGPL v3). Licences: see LICENSE-NOTICE.txt "
+                          "in the program folder.</p>")
 
     def open_settings(self):
         if SettingsDialog(self.s, self).exec():

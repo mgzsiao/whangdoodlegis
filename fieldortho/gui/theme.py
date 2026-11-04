@@ -23,7 +23,7 @@ LEVEL_COLORS = {"error": (ERROR, ERROR_SOFT), "warning": (WARN, WARN_SOFT), "inf
 
 STYLESHEET = f"""
 * {{ font-family: "Segoe UI", "Noto Sans", "Helvetica Neue", Arial; color: {INK}; }}
-QMainWindow, QWidget#Page {{ background: {BG}; }}
+QMainWindow, QWidget#Page, QDialog, QMessageBox {{ background: {BG}; }}
 QLabel#H1 {{ font-size: 24px; font-weight: 600; }}
 QLabel#H2 {{ font-size: 17px; font-weight: 600; }}
 QLabel#Muted {{ color: {MUTED}; font-size: 13px; }}

@@ -12,6 +12,8 @@ GIS/
 """
 from __future__ import annotations
 
+from .. import APP_NAME, DISCLAIMER
+
 import csv
 import json
 import math
@@ -533,7 +535,7 @@ def _crs_name(code: str | None) -> str:
 def _write_readme(path: str, job_name: str, res: ExportResult) -> None:
     s = res.summary
     lines = [
-        f"FieldOrtho delivery - {job_name}",
+        f"{APP_NAME} delivery - {job_name}",
         "=" * 60,
         "",
         f"Coordinate system : {s.get('crs_name')}  [{s.get('crs')}]",
@@ -574,5 +576,7 @@ def _write_readme(path: str, job_name: str, res: ExportResult) -> None:
     if res.warnings:
         lines += ["", "Notes", "-----"] + [f"- {w}" for w in res.warnings]
     lines += ["", "Open the .tif and .shp files directly in QGIS, ArcGIS Pro or Global Mapper."]
+    import textwrap
+    lines += ["", "Disclaimer", "----------"] + textwrap.wrap(DISCLAIMER, 90)
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

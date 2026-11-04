@@ -1,6 +1,8 @@
 """Exporting a georeferenced map: image, control points, extracted classes."""
 from __future__ import annotations
 
+from .. import APP_NAME
+
 import os
 import shutil
 import tempfile
@@ -103,7 +105,7 @@ def export(rgb: np.ndarray, det: G.Detection | None, gcps: list[G.GCP], grid_crs
                  f"source pixel = {fit.pixel_m:.2f} m on the ground.",
                  f"Grid coordinates read as {crsmod.label(grid_crs)}. {info['datum']}"] + notes
         readme = base + "_README.txt"
-        ex.write_export_readme(readme, f"FieldOrtho georeferenced map - {req.name}", req.crs, lonlat, files, notes)
+        ex.write_export_readme(readme, f"{APP_NAME} georeferenced map - {req.name}", req.crs, lonlat, files, notes)
         files.append(readme)
         progress(100, "Done")
         return list(dict.fromkeys(files)), info

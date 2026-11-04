@@ -1,19 +1,20 @@
-; FieldOrtho Windows installer (Inno Setup 6.1+)
+; WangDoodletheGIS Windows installer (Inno Setup 6.1+)
 ;
 ; Two editions from this one script:
-;   ISCC /DBUNDLE_ENGINE installer.iss       -> FieldOrtho_Setup_<v>_Offline.exe  (engine inside; no internet)
-;   ISCC /DODM_URL=... /DODM_SHA256=... ...  -> FieldOrtho_Setup_<v>_Online.exe   (downloads the engine)
+;   ISCC /DBUNDLE_ENGINE installer.iss       -> WangDoodletheGIS_Setup_<v>_Offline.exe  (engine inside; no internet)
+;   ISCC /DODM_URL=... /DODM_SHA256=... ...  -> WangDoodletheGIS_Setup_<v>_Online.exe   (downloads the engine)
 ;
 ; Expects:
-;   ..\dist\FieldOrtho\            PyInstaller output (app + GIS libraries + EGM96 geoid grid)
+;   ..\dist\WangDoodletheGIS\      PyInstaller output (app + GIS libraries + EGM96 geoid grid)
 ;   redist\ODM_Setup.exe           official OpenDroneMap Windows installer (offline edition)
-; Silent install (IT / scripted):  FieldOrtho_Setup_x.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+; Silent install (IT / scripted):  WangDoodletheGIS_Setup_x.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
-#define MyAppName "FieldOrtho"
+#define MyAppName "WangDoodletheGIS"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.1"
+  #define MyAppVersion "0.2.2"
 #endif
-#define MyAppExe "FieldOrtho.exe"
+#define MyAppExe "WangDoodletheGIS.exe"
+#define MyCliExe "WangDoodletheGIS-cli.exe"
 #ifndef ODM_URL
   #define ODM_URL ""
 #endif
@@ -30,16 +31,16 @@
 #endif
 
 [Setup]
-AppId={{6B0D3E1A-5F3C-4C7B-9C2E-5F1D2A7E9B41}
+AppId={{3F8A2C61-9D4E-4B7A-A1C5-7E2B9D0F6A38}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
-AppPublisher=FieldOrtho
+AppPublisher=Migz
 AppComments=Offline drone mapping, map georeferencing and flood/landslide scenarios
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=..\dist
-OutputBaseFilename=FieldOrtho_Setup_{#MyAppVersion}_{#Edition}
+OutputBaseFilename=WangDoodletheGIS_Setup_{#MyAppVersion}_{#Edition}
 SetupIconFile=..\fieldortho\resources\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2/ultra64
@@ -57,11 +58,11 @@ ChangesEnvironment=no
 CloseApplications=yes
 
 [Types]
-Name: "full"; Description: "FieldOrtho with the OpenDroneMap processing engine (recommended)"
-Name: "apponly"; Description: "FieldOrtho only (georeferencing, modelling, exports; engine installed later)"
+Name: "full"; Description: "{#MyAppName} with the OpenDroneMap processing engine (recommended)"
+Name: "apponly"; Description: "{#MyAppName} only (georeferencing, modelling, exports; engine installed later)"
 
 [Components]
-Name: "app"; Description: "FieldOrtho application (with GIS libraries and EGM96 geoid)"; Types: full apponly; Flags: fixed
+Name: "app"; Description: "{#MyAppName} application (with GIS libraries and EGM96 geoid)"; Types: full apponly; Flags: fixed
 #ifdef BUNDLE_ENGINE
 Name: "engine"; Description: "OpenDroneMap {#ODM_VERSION} processing engine (installs to C:\ODM)"; Types: full
 #else
@@ -70,21 +71,23 @@ Name: "engine"; Description: "OpenDroneMap {#ODM_VERSION} processing engine - do
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
-Name: "jobsfolder"; Description: "Create the 'FieldOrtho Jobs' folder in Documents"; GroupDescription: "Folders:"
+Name: "jobsfolder"; Description: "Create the '{#MyAppName} Jobs' folder in Documents"; GroupDescription: "Folders:"
 
 [Files]
-Source: "..\dist\FieldOrtho\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: app
+Source: "..\dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: app
 Source: "..\LICENSE-NOTICE.txt"; DestDir: "{app}"; Flags: ignoreversion; Components: app
+; AI point-classification model ODM would otherwise download during processing (offline laptops)
+Source: "redist\openpointclass\model.bin"; DestDir: "{commonappdata}\ODM\storage\models\openpointclass\v1_0_0"; Flags: onlyifdoesntexist uninsneveruninstall; Components: engine
 #ifdef BUNDLE_ENGINE
 Source: "redist\ODM_Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Components: engine
 #endif
 
 [Dirs]
-Name: "{userdocs}\FieldOrtho Jobs"; Tasks: jobsfolder
+Name: "{userdocs}\{#MyAppName} Jobs"; Tasks: jobsfolder
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
-Name: "{group}\FieldOrtho command line"; Filename: "{cmd}"; Parameters: "/k ""{app}\fieldortho-cli.exe"" --help"; WorkingDir: "{userdocs}"
+Name: "{group}\{#MyAppName} command line"; Filename: "{cmd}"; Parameters: "/k ""{app}\{#MyCliExe}"" --help"; WorkingDir: "{userdocs}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 
@@ -155,7 +158,7 @@ begin
     EngineDownloaded := True;
   except
     Result := 'The processing engine could not be downloaded (' + GetExceptionMessage + '). ' +
-              'FieldOrtho will still be installed; later use Settings > "Download and install engine".';
+              '{#MyAppName} will still be installed; later use Settings > "Download and install engine".';
   end;
 end;
 
@@ -183,7 +186,7 @@ function InitializeSetup(): Boolean;
 begin
   Result := True;
   if not IsWin64 then begin
-    MsgBox('FieldOrtho needs 64-bit Windows 10 or 11.', mbError, MB_OK);
+    MsgBox('{#MyAppName} needs 64-bit Windows 10 or 11.', mbError, MB_OK);
     Result := False;
   end;
 end;

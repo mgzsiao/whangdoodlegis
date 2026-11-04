@@ -1,6 +1,8 @@
 """Home screen and the first three wizard steps: photos, check, settings."""
 from __future__ import annotations
 
+from .. import APP_NAME, DISCLAIMER_SHORT
+
 import math
 import os
 
@@ -115,12 +117,13 @@ class HomePage(Page):
     open_settings = Signal()
     open_georef = Signal()
     open_models = Signal()
+    about = Signal()
 
     def __init__(self, session):
         super().__init__(session)
         top = QHBoxLayout()
         col = QVBoxLayout()
-        col.addWidget(label("FieldOrtho", "H1"))
+        col.addWidget(label(APP_NAME, "H1"))
         col.addWidget(label("Turn drone photos into orthomosaics, elevation models and contours "
                             "for GIS. Works without internet.", "Muted", wrap=True))
         top.addLayout(col, 1)
@@ -183,6 +186,16 @@ class HomePage(Page):
         self.folder_btn.clicked.connect(self._show_folder)
         row.addWidget(self.folder_btn)
         self.root.addLayout(row)
+        foot = QHBoxLayout()
+        credit = label(DISCLAIMER_SHORT, "Muted")
+        credit.setStyleSheet("font-size: 11px;")
+        foot.addWidget(credit)
+        ab = QPushButton("About")
+        ab.setObjectName("Link")
+        ab.clicked.connect(self.about.emit)
+        foot.addWidget(ab)
+        foot.addStretch(1)
+        self.root.addLayout(foot)
         self._dirs: list[str] = []
 
     def enter(self):
@@ -230,13 +243,13 @@ class HomePage(Page):
             system.open_path(self._dirs[r])
 
     def _browse_job(self):
-        d = QFileDialog.getExistingDirectory(self, "Open a FieldOrtho job folder", self.s.settings.jobs_root)
+        d = QFileDialog.getExistingDirectory(self, f"Open a {APP_NAME} job folder", self.s.settings.jobs_root)
         if d:
             if jobs.Job.is_job_dir(d):
                 self.open_job.emit(d)
             else:
                 QMessageBox.information(self, "Not a job folder",
-                                        "That folder is not a FieldOrtho job (no job.json inside).")
+                                        f"That folder is not a {APP_NAME} job (no job.json inside).")
 
 
 # ============================================================================
@@ -589,7 +602,7 @@ class OptionsPage(Page):
         self.heights.addItem("Shift all heights by a fixed amount", "offset")
         if not geoid_grid_path():
             self.heights.model().item(1).setEnabled(False)
-            self.heights.setItemData(1, "Geoid file not installed with this copy of FieldOrtho",
+            self.heights.setItemData(1, f"Geoid file not installed with this copy of {APP_NAME}",
                                      Qt.ToolTipRole)
         cl.addWidget(self.heights)
         self.offset = QDoubleSpinBox()

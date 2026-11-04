@@ -1,4 +1,4 @@
-# Real OpenDroneMap run through the INSTALLED FieldOrtho, on public drone photos
+# Real OpenDroneMap run through the INSTALLED WangDoodletheGIS, on public drone photos
 # (OpenDroneMap's odm_data_aukerman). Job folder deliberately contains spaces.
 param([int]$Photos = 30, [string]$Preset = "standard")
 $ErrorActionPreference = "Stop"
@@ -7,11 +7,11 @@ Set-Location $root
 New-Item -ItemType Directory -Force C:\ci_logs, "C:\ci\photos" | Out-Null
 Get-ChildItem C:\data\aukerman\images\*.JPG | Sort-Object Name | Select-Object -First $Photos |
     Copy-Item -Destination C:\ci\photos
-$jobs = "C:\ci\FieldOrtho Jobs"
+$jobs = "C:\ci\WangDoodletheGIS Jobs"
 # start clean: the checks below inspect the (single) job folder in here
 if (Test-Path $jobs) { Remove-Item -Recurse -Force $jobs }
 $t0 = Get-Date
-$app = "$env:ProgramFiles\FieldOrtho\fieldortho-cli.exe"
+$app = "$env:ProgramFiles\WangDoodletheGIS\WangDoodletheGIS-cli.exe"
 # Windows PowerShell 5.1 turns native stderr into errors under "Stop"; judge by exit code instead
 $ErrorActionPreference = "Continue"
 & $app process C:\ci\photos --name "Aukerman test" --preset $Preset --jobs-root $jobs 2>&1 |

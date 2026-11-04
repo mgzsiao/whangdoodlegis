@@ -1,6 +1,8 @@
 """Persistent app settings (stored per user)."""
 from __future__ import annotations
 
+from .. import APP_NAME
+
 import json
 import os
 from dataclasses import dataclass, asdict, field
@@ -13,14 +15,14 @@ def config_dir() -> str:
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
     else:
         base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    d = os.path.join(base, "FieldOrtho")
+    d = os.path.join(base, APP_NAME)
     os.makedirs(d, exist_ok=True)
     return d
 
 
 def default_jobs_root() -> str:
     docs = os.path.join(os.path.expanduser("~"), "Documents")
-    return os.path.join(docs if os.path.isdir(docs) else os.path.expanduser("~"), "FieldOrtho Jobs")
+    return os.path.join(docs if os.path.isdir(docs) else os.path.expanduser("~"), f"{APP_NAME} Jobs")
 
 
 @dataclass

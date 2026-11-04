@@ -1,6 +1,8 @@
 """Wizard steps 4 and 5: processing and results."""
 from __future__ import annotations
 
+from .. import APP_NAME
+
 import os
 import shutil
 import subprocess
@@ -60,7 +62,7 @@ class ProcessPage(Page):
         self.notice = QVBoxLayout()
         self.root.addLayout(self.notice)
         self.notice.addWidget(IssueBox("info", "You can leave this running",
-                                       "Keep the laptop plugged in. FieldOrtho keeps it awake while working. "
+                                       f"Keep the laptop plugged in. {APP_NAME} keeps it awake while working. "
                                        "If it stops, you can continue later from the Home screen."))
         drow = QHBoxLayout()
         self.details_btn = QPushButton("Show technical details")
@@ -142,7 +144,7 @@ class ProcessPage(Page):
         self.log.clear()
         clear_layout(self.notice)
         self.notice.addWidget(IssueBox("info", "You can leave this running",
-                                       "Keep the laptop plugged in. FieldOrtho keeps it awake while working. "
+                                       f"Keep the laptop plugged in. {APP_NAME} keeps it awake while working. "
                                        "If it stops, you can continue later from the Home screen."))
         for b in (self.save_log_btn, self.settings_btn, self.retry_btn):
             b.setVisible(False)

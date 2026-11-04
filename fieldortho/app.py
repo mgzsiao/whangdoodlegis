@@ -1,4 +1,4 @@
-"""FieldOrtho entry point (GUI)."""
+"""WangDoodletheGIS entry point (GUI)."""
 from __future__ import annotations
 
 import os
@@ -21,6 +21,7 @@ def _set_gis_data():
 def main() -> int:
     _set_gis_data()
 
+    from PySide6.QtCore import Qt
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
@@ -31,6 +32,11 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
+    # The design is light-only: in Windows dark mode Qt would otherwise give dialogs a dark
+    # background under the stylesheet's dark text (unreadable message boxes)
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):          # Qt 6.8+
+        hints.setColorScheme(Qt.ColorScheme.Light)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLESHEET)
     icon = os.path.join(os.path.dirname(__file__), "resources", "icon.png")

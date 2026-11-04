@@ -1,6 +1,8 @@
 """Georeferencer screen: open a map image -> grid detected -> confirm labels -> export."""
 from __future__ import annotations
 
+from .. import APP_NAME
+
 import math
 import os
 
@@ -204,7 +206,7 @@ class GeorefPage(Page):
         prev.clicked.connect(self._preview_classes)
         lay.addWidget(prev, 0, Qt.AlignLeft)
         lay.addWidget(label("Save to folder", "H2"))
-        self.out_dir = FolderPicker(os.path.join(os.path.expanduser("~"), "Documents", "FieldOrtho Georeferenced"))
+        self.out_dir = FolderPicker(os.path.join(os.path.expanduser("~"), "Documents", f"{APP_NAME} Georeferenced"))
         lay.addWidget(self.out_dir)
         self.exp_bar = QProgressBar()
         self.exp_bar.setVisible(False)

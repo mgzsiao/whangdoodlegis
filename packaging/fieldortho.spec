@@ -1,4 +1,4 @@
-# PyInstaller spec - builds dist/FieldOrtho/ (one-folder app).
+# PyInstaller spec - builds dist/WangDoodletheGIS/ (one-folder app).
 #   pyinstaller packaging/fieldortho.spec --noconfirm
 import os
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -30,8 +30,8 @@ b = Analysis([os.path.join(ROOT, "packaging", "launch_cli.py")], **common)
 
 icon = os.path.join(ROOT, "fieldortho", "resources", "icon.ico")
 pyz_a = PYZ(a.pure)
-exe_a = EXE(pyz_a, a.scripts, [], exclude_binaries=True, name="FieldOrtho", console=False,
+exe_a = EXE(pyz_a, a.scripts, [], exclude_binaries=True, name="WangDoodletheGIS", console=False,
             icon=icon, version=None)
 pyz_b = PYZ(b.pure)
-exe_b = EXE(pyz_b, b.scripts, [], exclude_binaries=True, name="fieldortho-cli", console=True, icon=icon)
-coll = COLLECT(exe_a, a.binaries, a.datas, exe_b, b.binaries, b.datas, name="FieldOrtho")
+exe_b = EXE(pyz_b, b.scripts, [], exclude_binaries=True, name="WangDoodletheGIS-cli", console=True, icon=icon)
+coll = COLLECT(exe_a, a.binaries, a.datas, exe_b, b.binaries, b.datas, name="WangDoodletheGIS")

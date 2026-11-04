@@ -1,6 +1,6 @@
 """Running OpenDroneMap (ODM) as an external, fully offline processing engine.
 
-FieldOrtho never talks to the internet: ODM is installed locally (Windows
+WangDoodletheGIS never talks to the internet: ODM is installed locally (Windows
 native build in C:\\ODM by default) and launched as a child process. Progress
 comes from ODM's UDP progress broadcast (port 6367, the same mechanism NodeODM
 uses) with a fallback to parsing "Running <stage> stage" log lines.
@@ -123,14 +123,14 @@ def space_free_alias(project_dir: str, base: str | None = None) -> str | None:
 
     Some ODM command lines are built without quoting (ODM 3.6.2: the SMRF ground
     classification in opendm/dem/pdal.py runs `pdal translate -i <path>` unquoted). With a job
-    folder such as 'Documents\\FieldOrtho Jobs' that step fails, no ground points are found and
+    folder such as 'Documents\\WangDoodletheGIS Jobs' that step fails, no ground points are found and
     the DTM stage crashes. ODM therefore gets this alias instead of the real folder; everything
     it writes lands in the real job folder. Junctions need no admin rights.
     Returns None (use the real path) if no alias is needed or it cannot be made."""
     if not IS_WINDOWS or " " not in project_dir:
         return None
     import hashlib
-    base = base or os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "FieldOrtho", "odm")
+    base = base or os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "WangDoodletheGIS", "odm")
     if " " in base:
         return None
     target = os.path.abspath(project_dir)
@@ -160,7 +160,7 @@ def remove_alias(alias: str | None):
 def build_command(info: EngineInfo, project_dir: str, args: list[str]):
     """Command to launch ODM. On Windows with run.bat this is a single command-line string:
     cmd /s /c ""C:\\ODM\\run.bat" "C:\\path with spaces\\job" --args"  (the /s form keeps the
-    inner quotes intact, so job folders such as 'Documents\\FieldOrtho Jobs' work)."""
+    inner quotes intact, so job folders such as 'Documents\\WangDoodletheGIS Jobs' work)."""
     project_dir = os.path.abspath(project_dir)
     if info.mode == "docker":
         parent, name = os.path.split(project_dir)

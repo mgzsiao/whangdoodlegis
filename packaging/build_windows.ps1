@@ -1,10 +1,10 @@
-# Builds the FieldOrtho Windows installers. Everything needed is downloaded automatically.
+# Builds the WangDoodletheGIS Windows installers. Everything needed is downloaded automatically.
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 #
 # Produces in dist\:
-#   FieldOrtho_Setup_<v>_Online.exe   small; downloads the OpenDroneMap engine during setup
-#   FieldOrtho_Setup_<v>_Offline.exe  everything inside (engine included) - for computers without internet
+#   WangDoodletheGIS_Setup_<v>_Online.exe   small; downloads the OpenDroneMap engine during setup
+#   WangDoodletheGIS_Setup_<v>_Offline.exe  everything inside (engine included) - for computers without internet
 #   build-info.json                   versions, sizes and SHA-256 of what was built
 #
 # Options:  -SkipTests   -SkipOffline   -Python <path to python.exe 3.11/3.12>
@@ -42,6 +42,17 @@ if (-not (Test-Path $odmExe) -or (Get-Item $odmExe).Length -ne $asset.size) {
 }
 $odmSha = (Get-FileHash $odmExe -Algorithm SHA256).Hash.ToLower()
 Write-Host "   $($rel.tag_name)  sha256 $odmSha"
+# ODM downloads this point-classification model during processing (opendm/opc.py, ODM 3.6.x);
+# bundled so offline laptops get the same classified point cloud. URL/version must match opc.py.
+$opcDir = "packaging\redist\openpointclass"
+if (-not (Test-Path "$opcDir\model.bin")) {
+    New-Item -ItemType Directory -Force $opcDir | Out-Null
+    $zip = "build\opc_model.zip"
+    Invoke-WebRequest "https://github.com/uav4geo/OpenPointClass/releases/download/v1.1.3/vehicles-vegetation-buildings.zip" `
+        -OutFile $zip -Headers $headers
+    Expand-Archive $zip -DestinationPath $opcDir -Force
+    if (-not (Test-Path "$opcDir\model.bin")) { throw "OpenPointClass model.bin not found in the downloaded zip" }
+}
 
 Step "4/7 Inno Setup compiler"
 $isccPaths = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
@@ -76,7 +87,7 @@ if (-not $SkipTests) {
 Step "6/7 Freeze the application (PyInstaller)"
 & $py -m PyInstaller packaging\fieldortho.spec --noconfirm --distpath dist --workpath build\pyi
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
-& dist\FieldOrtho\fieldortho-cli.exe --help | Out-Null
+& dist\WangDoodletheGIS\WangDoodletheGIS-cli.exe --help | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Frozen command line does not start" }
 
 Step "7/7 Installers (Inno Setup)"
@@ -87,9 +98,9 @@ $offline = $null
 if (-not $SkipOffline) {
     & $iscc /Qp "/DMyAppVersion=$version" /DBUNDLE_ENGINE "/DODM_VERSION=$($rel.tag_name)" packaging\installer.iss
     if ($LASTEXITCODE -ne 0) { throw "Offline installer failed to compile" }
-    $offline = Get-Item "dist\FieldOrtho_Setup_${version}_Offline.exe"
+    $offline = Get-Item "dist\WangDoodletheGIS_Setup_${version}_Offline.exe"
 }
-$online = Get-Item "dist\FieldOrtho_Setup_${version}_Online.exe"
+$online = Get-Item "dist\WangDoodletheGIS_Setup_${version}_Online.exe"
 
 $info = [ordered]@{
     version = $version; built = (Get-Date).ToString("s"); tests = $testResult
