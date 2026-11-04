@@ -102,6 +102,22 @@ def detect(configured_path: str = "", mode: str = "native", docker_image: str = 
 _NO_WINDOW = 0x08000000 if IS_WINDOWS else 0
 
 
+# Variables that break ODM's own Windows launcher if inherited:
+#  - an activated Python venv (_OLD_VIRTUAL_PATH etc.): ODM's win32env.bat then replaces its
+#    PATH with _OLD_VIRTUAL_PATH, dropping ODM's GDAL DLL folder -> "DLL load failed" in rasterio
+#  - NoDefaultCurrentDirectoryInExePath: run.bat calls winrun.bat from its own folder by bare name
+_ENV_DROP = ("_OLD_VIRTUAL_PATH", "_OLD_VIRTUAL_PYTHONHOME", "_OLD_VIRTUAL_PROMPT", "VIRTUAL_ENV",
+             "VIRTUAL_ENV_PROMPT", "PYTHONHOME", "PYTHONPATH", "NoDefaultCurrentDirectoryInExePath")
+
+
+def engine_env(base: dict | None = None) -> dict:
+    """Environment for the ODM child process."""
+    drop = {k.upper() for k in _ENV_DROP}
+    env = {k: v for k, v in (os.environ if base is None else base).items() if k.upper() not in drop}
+    env.update(ODM_NONINTERACTIVE="1", PYTHONUNBUFFERED="1")
+    return env
+
+
 def build_command(info: EngineInfo, project_dir: str, args: list[str]):
     """Command to launch ODM. On Windows with run.bat this is a single command-line string:
     cmd /s /c ""C:\\ODM\\run.bat" "C:\\path with spaces\\job" --args"  (the /s form keeps the
@@ -249,7 +265,7 @@ class OdmRunner:
         """Blocking run. Call from a worker thread."""
         t0 = time.time()
         cmd = build_command(self.info, self.project_dir, self.args)
-        env = dict(os.environ, ODM_NONINTERACTIVE="1", PYTHONUNBUFFERED="1")
+        env = engine_env()
         log = open(self.log_path, "a", encoding="utf-8") if self.log_path else None
         if log:
             shown = cmd if isinstance(cmd, str) else subprocess.list2cmdline(cmd)

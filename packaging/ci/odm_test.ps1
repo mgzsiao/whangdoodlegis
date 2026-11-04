@@ -8,6 +8,8 @@ New-Item -ItemType Directory -Force C:\ci_logs, "C:\ci\photos" | Out-Null
 Get-ChildItem C:\data\aukerman\images\*.JPG | Sort-Object Name | Select-Object -First $Photos |
     Copy-Item -Destination C:\ci\photos
 $jobs = "C:\ci\FieldOrtho Jobs"
+# start clean: the checks below inspect the (single) job folder in here
+if (Test-Path $jobs) { Remove-Item -Recurse -Force $jobs }
 $t0 = Get-Date
 $app = "$env:ProgramFiles\FieldOrtho\fieldortho-cli.exe"
 # Windows PowerShell 5.1 turns native stderr into errors under "Stop"; judge by exit code instead

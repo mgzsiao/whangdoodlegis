@@ -153,6 +153,18 @@ def test_engine_path_is_absolute(monkeypatch):
     assert info.ok and os.path.isabs(info.path)
 
 
+def test_engine_env_drops_venv_leftovers():
+    """ODM's win32env.bat restores PATH from _OLD_VIRTUAL_PATH (set by an activated venv),
+    which removes ODM's DLL folder; such variables must not reach the engine."""
+    env = engine.engine_env({"PATH": r"C:\x", "_OLD_VIRTUAL_PATH": r"C:\y", "VIRTUAL_ENV": r"C:\v",
+                             "PYTHONHOME": r"C:\p", "NODEFAULTCURRENTDIRECTORYINEXEPATH": "1",
+                             "SYSTEMROOT": r"C:\Windows"})
+    assert env["PATH"] == r"C:\x" and env["SYSTEMROOT"] == r"C:\Windows"
+    assert env["ODM_NONINTERACTIVE"] == "1"
+    for k in ("_OLD_VIRTUAL_PATH", "VIRTUAL_ENV", "PYTHONHOME", "NODEFAULTCURRENTDIRECTORYINEXEPATH"):
+        assert k not in env
+
+
 @need_data
 def test_sea_level_conversion_with_geoid_grid(tmp_path, photos):
     """EGM96 option: uses a synthetic global geoid grid with N = -33.5 m."""
