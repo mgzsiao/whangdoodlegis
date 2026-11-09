@@ -1,8 +1,8 @@
 """Command line for power users and batch processing.
 
-    WangDoodletheGIS-cli check   D:\\Flights\\SiteA
-    WangDoodletheGIS-cli process D:\\Flights\\SiteA --name "Site A" --preset standard --crs EPSG:32651
-    WangDoodletheGIS-cli engine
+    WhangDoodleGIS-cli check   D:\\Flights\\SiteA
+    WhangDoodleGIS-cli process D:\\Flights\\SiteA --name "Site A" --preset standard --crs EPSG:32651
+    WhangDoodleGIS-cli engine
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def main(argv=None) -> int:
             stream.reconfigure(errors="replace")
         except Exception:
             pass
-    ap = argparse.ArgumentParser(prog="WangDoodletheGIS-cli", description="Offline drone photo processing")
+    ap = argparse.ArgumentParser(prog="WhangDoodleGIS-cli", description="Offline drone photo processing")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check", help="check a photo folder")
     c.add_argument("photos")

@@ -11,7 +11,7 @@ so QGIS applies the right datum shift (see core/crs.py).
 """
 from __future__ import annotations
 
-from .. import DISCLAIMER
+from .. import DISCLAIMER_PARAGRAPHS
 
 import json
 import math
@@ -496,7 +496,9 @@ def write_export_readme(path: str, title: str, dst_code, lonlat, files: list[str
     lines += ["", "PNG/JPEG: the .pgw/.jgw world file and .aux.xml carry the position and CRS - keep them "
               "next to the image.", "KML/KMZ are always WGS 84 (Google Earth standard)."]
     import textwrap
-    lines += ["", "Disclaimer", "----------"] + textwrap.wrap(DISCLAIMER, 90)
+    lines += ["", "Disclaimer", "----------"]
+    for para in DISCLAIMER_PARAGRAPHS:
+        lines += textwrap.wrap(para, 90) + [""]
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     _ = c

@@ -1,25 +1,33 @@
-WangDoodletheGIS - offline drone mapping, map georeferencing and hazard scenarios
-==================================================================================
+WhangDoodleGIS - offline drone mapping, map georeferencing and hazard scenarios
+================================================================================
 
-Developed by Migz.
+Developed by Migz Siao.
 
 Disclaimer
 ----------
-WangDoodletheGIS is provided as is, without warranty. Its maps, elevation models and
-flood/landslide scenarios are estimates whose accuracy depends on the input data and
-settings used, and its hazard scenarios do not replace official MGB geohazard assessments.
-Verify results in the field and apply professional judgement before using them in
-official decisions.
+WhangDoodleGIS is developed by Migz Siao and is provided as is, without warranty. The
+accuracy of its maps, elevation models and other outputs depends on the data entered
+and the settings used.
+
+Flood and landslide models and hazard scenarios are user-run simulations. They do not
+replace expert knowledge, or the official hazard maps and assessments of mapping and
+scientific institutions such as MGB, NAMRIA, DOST-PAGASA and DOST-PHIVOLCS. Local
+terrain awareness, professional judgement and the user's own discretion remain
+essential. Verify results in the field before using them in any official decision.
+
+WhangDoodleGIS and its developer are not responsible for any misinformation, decision
+or consequence arising from the use or sharing of its results.
 
 Third-party software included or installed
 ------------------------------------------
 - OpenDroneMap (ODM) - GNU Affero General Public License v3.0.
-  WangDoodletheGIS runs ODM as a separate program. Source code: https://github.com/OpenDroneMap/ODM
+  WhangDoodleGIS runs ODM as a separate program. Source code: https://github.com/OpenDroneMap/ODM
   The ODM installer adds its own license files under C:\ODM\licenses.
 - Qt / PySide6 - GNU LGPL v3 (https://www.qt.io, https://wiki.qt.io/Qt_for_Python).
 - GDAL / PROJ (via rasterio and pyogrio) - MIT / X11 style licences.
 - rasterio, pyogrio, shapely, pyproj, numpy, scipy, Pillow, contourpy, pyshp -
   BSD / MIT / HPND style licences.
 - EGM96 geoid grid (us_nga_egm96_15.tif) from the PROJ-data project - public domain (US NGA).
+- Icons: Segoe Fluent Icons / Segoe MDL2 Assets, part of Windows (not redistributed).
 
 By installing you accept this disclaimer and these licences.

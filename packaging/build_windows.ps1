@@ -1,10 +1,10 @@
-# Builds the WangDoodletheGIS Windows installers. Everything needed is downloaded automatically.
+# Builds the WhangDoodleGIS Windows installers. Everything needed is downloaded automatically.
 #
 #   powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 #
 # Produces in dist\:
-#   WangDoodletheGIS_Setup_<v>_Online.exe   small; downloads the OpenDroneMap engine during setup
-#   WangDoodletheGIS_Setup_<v>_Offline.exe  everything inside (engine included) - for computers without internet
+#   WhangDoodleGIS_Setup_<v>_Online.exe   small; downloads the OpenDroneMap engine during setup
+#   WhangDoodleGIS_Setup_<v>_Offline.exe  everything inside (engine included) - for computers without internet
 #   build-info.json                   versions, sizes and SHA-256 of what was built
 #
 # Options:  -SkipTests   -SkipOffline   -Python <path to python.exe 3.11/3.12>
@@ -87,7 +87,7 @@ if (-not $SkipTests) {
 Step "6/7 Freeze the application (PyInstaller)"
 & $py -m PyInstaller packaging\fieldortho.spec --noconfirm --distpath dist --workpath build\pyi
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
-& dist\WangDoodletheGIS\WangDoodletheGIS-cli.exe --help | Out-Null
+& dist\WhangDoodleGIS\WhangDoodleGIS-cli.exe --help | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Frozen command line does not start" }
 
 Step "7/7 Installers (Inno Setup)"
@@ -98,9 +98,9 @@ $offline = $null
 if (-not $SkipOffline) {
     & $iscc /Qp "/DMyAppVersion=$version" /DBUNDLE_ENGINE "/DODM_VERSION=$($rel.tag_name)" packaging\installer.iss
     if ($LASTEXITCODE -ne 0) { throw "Offline installer failed to compile" }
-    $offline = Get-Item "dist\WangDoodletheGIS_Setup_${version}_Offline.exe"
+    $offline = Get-Item "dist\WhangDoodleGIS_Setup_${version}_Offline.exe"
 }
-$online = Get-Item "dist\WangDoodletheGIS_Setup_${version}_Online.exe"
+$online = Get-Item "dist\WhangDoodleGIS_Setup_${version}_Online.exe"
 
 $info = [ordered]@{
     version = $version; built = (Get-Date).ToString("s"); tests = $testResult

@@ -1,7 +1,7 @@
 """Home screen and the first three wizard steps: photos, check, settings."""
 from __future__ import annotations
 
-from .. import APP_NAME, DISCLAIMER_SHORT
+from .. import APP_NAME
 
 import math
 import os
@@ -16,30 +16,45 @@ from ..core import crs as crsmod, jobs, photos as ph, presets, system
 from ..core.pipeline import geoid_grid_path
 from . import theme
 from .session import Session
-from .widgets import IssueBox, PhotoMap, StatCard, card, label
+from .inputs import LengthEdit
+from .widgets import IssueBox, PhotoMap, StatCard, action_bar, card, label
 from .workers import Task
 
 
 class Page(QWidget):
     go_next = Signal()
     go_back = Signal()
+    heading_changed = Signal()
+    CRUMB = ""
+    TITLE = ""
 
     def __init__(self, session: Session):
         super().__init__()
         self.setObjectName("Page")
         self.s = session
         self.root = QVBoxLayout(self)
-        self.root.setContentsMargins(32, 24, 32, 20)
-        self.root.setSpacing(14)
+        self.root.setContentsMargins(20, 16, 20, 14)
+        self.root.setSpacing(12)
+        self._actions = None
 
     def enter(self):
         pass
+
+    # ---- shown by the main window's title bar
+    def heading(self) -> tuple[str, str]:
+        return self.CRUMB, self.TITLE
+
+    def header_actions(self):
+        return self._actions
+
+    def set_actions(self, widgets):
+        self._actions = action_bar(widgets)
 
     def footer(self, back: str | None = "Back", next_text: str | None = "Next") -> tuple:
         row = QHBoxLayout()
         b = n = None
         if back:
-            b = QPushButton(back)
+            b = QPushButton(("←  " + back) if back == "Back" else back)
             b.clicked.connect(self.go_back.emit)
             row.addWidget(b)
         row.addStretch(1)
@@ -76,180 +91,86 @@ def fmt_minutes(m: float) -> str:
 # Home
 # ============================================================================
 
-class ToolTile(QFrame):
-    clicked = Signal()
+class ToolCard(QFrame):
+    """A tool on the Home screen: icon, title, description and one button."""
 
-    def __init__(self, icon: str, title: str, text: str):
+    def __init__(self, icon: str, title: str, text: str, button: str, primary: bool = False):
         super().__init__()
-        self.setObjectName("ChoiceCard")
-        self.setCursor(Qt.PointingHandCursor)
+        self.setObjectName("Card")
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
-        i = QLabel(icon)
-        i.setStyleSheet("font-size: 30px; background: transparent;")
-        lay.addWidget(i)
-        t = QLabel(title)
-        t.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.ACCENT}; background: transparent;")
-        lay.addWidget(t)
-        d = QLabel(text)
-        d.setWordWrap(True)
-        d.setStyleSheet(f"font-size: 12px; color: {theme.MUTED}; background: transparent;")
-        lay.addWidget(d)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(8)
+        ic = QLabel(theme.ICONS[icon])
+        ic.setFixedSize(40, 40)
+        ic.setAlignment(Qt.AlignCenter)
+        ic.setStyleSheet(f"font-family: {theme.ICON_FONT}; font-size: 19px; color: {theme.ACCENT}; "
+                         f"background: {theme.ACCENT_SOFT}; border-radius: 8px;")
+        lay.addWidget(ic)
+        lay.addWidget(label(title, "H2"))
+        lay.addWidget(label(text, "Muted", wrap=True))
         lay.addStretch(1)
-
-    def enterEvent(self, e):
-        self.setProperty("selected", "true")
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-    def leaveEvent(self, e):
-        self.setProperty("selected", "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-    def mousePressEvent(self, _e):
-        self.clicked.emit()
+        self.button = QPushButton(button + "  →")
+        if primary:
+            self.button.setObjectName("Primary")
+        row = QHBoxLayout()
+        row.addWidget(self.button)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.setMinimumHeight(190)
 
 
 class HomePage(Page):
     new_job = Signal()
-    open_job = Signal(str)
-    open_settings = Signal()
+    open_row = Signal(object)
     open_georef = Signal()
     open_models = Signal()
-    about = Signal()
+    CRUMB = "Home"
+    TITLE = "Welcome"
 
     def __init__(self, session):
         super().__init__(session)
-        top = QHBoxLayout()
-        col = QVBoxLayout()
-        col.addWidget(label(APP_NAME, "H1"))
-        col.addWidget(label("Turn drone photos into orthomosaics, elevation models and contours "
-                            "for GIS. Works without internet.", "Muted", wrap=True))
-        top.addLayout(col, 1)
-        sb = QPushButton("⚙  Settings")
-        sb.clicked.connect(self.open_settings.emit)
-        top.addWidget(sb, 0, Qt.AlignTop)
-        self.root.addLayout(top)
-
         self.engine_box = QVBoxLayout()
         self.root.addLayout(self.engine_box)
-
         tiles = QHBoxLayout()
         tiles.setSpacing(14)
-        t1 = ToolTile("\U0001F681", "Process drone photos",
-                      "Orthomosaic, surface & terrain models, contours \u2013 exported for GIS in any coordinate system.")
-        t1.clicked.connect(self.new_job.emit)
-        t2 = ToolTile("\U0001F5FA", "Georeference a map",
-                      "Scanned or exported maps with a coordinate grid (e.g. MGB hazard maps) \u2192 GeoTIFF for QGIS, "
-                      "plus hazard zones as polygons.")
-        t2.clicked.connect(self.open_georef.emit)
-        t3 = ToolTile("\U0001F30A", "Flood & landslide modelling",
-                      "Raise the water level on a terrain model, or test a steep slope and see how far a landslide runs.")
-        t3.clicked.connect(self.open_models.emit)
+        t1 = ToolCard("drone", "Drone mapping",
+                      "Turn drone photos into an orthomosaic, surface and terrain models and contours, "
+                      "exported for GIS in any coordinate system.", "New mapping job", True)
+        t1.button.clicked.connect(self.new_job.emit)
+        t2 = ToolCard("georef", "Georeference a map",
+                      "Place a scanned map with a coordinate grid (e.g. MGB hazard maps) on the ground and "
+                      "turn its hazard zones into polygons.", "Open map image")
+        t2.button.clicked.connect(self.open_georef.emit)
+        t3 = ToolCard("flood", "Flood & landslide",
+                      "Raise a river or the sea on a terrain model, or test a steep slope and see how far a "
+                      "landslide could run.", "Open terrain model")
+        t3.button.clicked.connect(self.open_models.emit)
         for t in (t1, t2, t3):
-            t.setMinimumHeight(150)
             tiles.addWidget(t, 1)
         self.root.addLayout(tiles)
-        hero = QHBoxLayout()
-        self.new_btn = QPushButton("\uFF0B   New mapping job")
-        self.new_btn.setObjectName("Primary")
-        self.new_btn.clicked.connect(self.new_job.emit)
-        hero.addWidget(self.new_btn)
-        ob = QPushButton("Open a job folder…")
-        ob.clicked.connect(self._browse_job)
-        hero.addWidget(ob)
-        hero.addStretch(1)
-        self.root.addLayout(hero)
-
-        self.root.addSpacing(6)
-        self.root.addWidget(label("Recent jobs", "H2"))
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Job", "Created", "Photos", "Status"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        for i in (1, 2, 3):
-            self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeToContents)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.cellDoubleClicked.connect(lambda r, _c: self._open_row(r))
-        self.root.addWidget(self.table, 1)
-        row = QHBoxLayout()
-        self.empty = label("No jobs yet. Start with “New mapping job”.", "Muted")
-        row.addWidget(self.empty)
-        row.addStretch(1)
-        self.open_btn = QPushButton("Open")
-        self.open_btn.clicked.connect(lambda: self._open_row(self.table.currentRow()))
-        row.addWidget(self.open_btn)
-        self.folder_btn = QPushButton("Show in folder")
-        self.folder_btn.clicked.connect(self._show_folder)
-        row.addWidget(self.folder_btn)
-        self.root.addLayout(row)
-        foot = QHBoxLayout()
-        credit = label(DISCLAIMER_SHORT, "Muted")
-        credit.setStyleSheet("font-size: 11px;")
-        foot.addWidget(credit)
-        ab = QPushButton("About")
-        ab.setObjectName("Link")
-        ab.clicked.connect(self.about.emit)
-        foot.addWidget(ab)
-        foot.addStretch(1)
-        self.root.addLayout(foot)
-        self._dirs: list[str] = []
+        from .jobs_page import JobsTable
+        self.jobs = JobsTable(session, 12, "Recent jobs")
+        self.jobs.open_row.connect(self.open_row.emit)
+        self.root.addWidget(self.jobs, 1)
+        self.pill = QLabel("")
+        self.set_actions([self.pill])
 
     def enter(self):
         clear_layout(self.engine_box)
         e = self.s.engine
         if e.ok:
-            self.engine_box.addWidget(IssueBox("ok", e.message, system.describe_machine()))
+            self.pill.setText(f"●  Engine ready · {e.message.replace(' ready', '')}")
+            self.pill.setStyleSheet(f"background: {theme.OK_SOFT}; color: {theme.OK}; border-radius: 13px; "
+                                    "padding: 5px 12px; font-weight: 600;")
         else:
+            self.pill.setText("●  Engine not installed")
+            self.pill.setStyleSheet(f"background: {theme.ERROR_SOFT}; color: {theme.ERROR}; border-radius: 13px; "
+                                    "padding: 5px 12px; font-weight: 600;")
             self.engine_box.addWidget(IssueBox("error", "Processing engine not found",
                                                e.message + " New jobs can be prepared, but not processed. "
-                                               "Open Settings \u2192 \u201cDownload and install engine\u201d. "
+                                               "Open Settings → “Download and install engine”. "
                                                "Georeferencing and modelling work without it."))
-        self.table.setRowCount(0)
-        self._dirs = []
-        status_text = {jobs.STATUS_DONE: "✔ Ready", jobs.STATUS_FAILED: "⚠ Stopped with error",
-                       jobs.STATUS_CANCELLED: "Cancelled", jobs.STATUS_RUNNING: "Interrupted",
-                       jobs.STATUS_NEW: "Not processed"}
-        for d in self.s.settings.recent_jobs:
-            if not jobs.Job.is_job_dir(d):
-                continue
-            try:
-                j = jobs.Job.load(d)
-            except Exception:
-                continue
-            r = self.table.rowCount()
-            self.table.insertRow(r)
-            for c, v in enumerate([j.name, j.created.replace("T", "  ")[:17], str(len(j.photos)),
-                                   status_text.get(j.status, j.status)]):
-                self.table.setItem(r, c, QTableWidgetItem(v))
-            self._dirs.append(d)
-        has = bool(self._dirs)
-        self.empty.setVisible(not has)
-        self.open_btn.setEnabled(has)
-        self.folder_btn.setEnabled(has)
-        if has:
-            self.table.selectRow(0)
-
-    def _open_row(self, r):
-        if 0 <= r < len(self._dirs):
-            self.open_job.emit(self._dirs[r])
-
-    def _show_folder(self):
-        r = self.table.currentRow()
-        if 0 <= r < len(self._dirs):
-            system.open_path(self._dirs[r])
-
-    def _browse_job(self):
-        d = QFileDialog.getExistingDirectory(self, f"Open a {APP_NAME} job folder", self.s.settings.jobs_root)
-        if d:
-            if jobs.Job.is_job_dir(d):
-                self.open_job.emit(d)
-            else:
-                QMessageBox.information(self, "Not a job folder",
-                                        f"That folder is not a {APP_NAME} job (no job.json inside).")
+        self.jobs.refresh()
 
 
 # ============================================================================
@@ -303,9 +224,10 @@ class DropZone(QFrame):
 
 
 class PhotosPage(Page):
+    TITLE = "Choose the photos"
+
     def __init__(self, session):
         super().__init__(session)
-        self.root.addWidget(label("Step 1 · Choose the photos", "H1"))
         self.zone = DropZone()
         self.zone.btn.clicked.connect(self._browse)
         self.zone.dropped.connect(self.load_folder)
@@ -313,13 +235,18 @@ class PhotosPage(Page):
         c = card()
         g = QGridLayout(c)
         g.setContentsMargins(16, 12, 16, 12)
+        g.setVerticalSpacing(6)
         g.addWidget(label("Photo folder"), 0, 0)
         self.folder = label("-", "Muted")
         g.addWidget(self.folder, 0, 1)
         g.addWidget(label("Job name"), 1, 0)
         self.name = QLineEdit()
         self.name.setPlaceholderText("e.g. Barangay San Isidro farm lot 2026-11-04")
+        self.name.setMaxLength(80)
         g.addWidget(self.name, 1, 1)
+        self.name_hint = label("Used as the name of the job folder. Letters, numbers, spaces and - are fine.",
+                               "Hint", wrap=True)
+        g.addWidget(self.name_hint, 2, 1)
         g.setColumnStretch(1, 1)
         self.root.addWidget(c)
         self.bar = QProgressBar()
@@ -375,7 +302,20 @@ class PhotosPage(Page):
         self._update()
 
     def _update(self):
-        self.next_btn.setEnabled(bool(self.s.photos) and bool(self.name.text().strip()))
+        name = self.name.text().strip()
+        bad = sorted(set(c for c in name if c in r'<>:"/\|?*'))
+        if bad:
+            self.name_hint.setObjectName("Warn")
+            self.name_hint.setText("These characters cannot be used in a folder name and will be replaced by _: "
+                                   + " ".join(bad))
+        elif not name and self.s.photos:
+            self.name_hint.setObjectName("Error")
+            self.name_hint.setText("Type a name for this job.")
+        else:
+            self.name_hint.setObjectName("Hint")
+            self.name_hint.setText("Used as the name of the job folder. Letters, numbers, spaces and - are fine.")
+        theme.repolish(self.name_hint)
+        self.next_btn.setEnabled(bool(self.s.photos) and bool(name))
 
     def job_name(self) -> str:
         return self.name.text().strip()
@@ -386,9 +326,10 @@ class PhotosPage(Page):
 # ============================================================================
 
 class CheckPage(Page):
+    TITLE = "Check the photos"
+
     def __init__(self, session):
         super().__init__(session)
-        self.root.addWidget(label("Step 2 · Check the photos", "H1"))
         body = QHBoxLayout()
         body.setSpacing(16)
         mapcard = card()
@@ -409,21 +350,26 @@ class CheckPage(Page):
             grid.addWidget(c, i // 2, i % 2)
         right.addLayout(grid)
 
-        hrow = QHBoxLayout()
-        hrow.addWidget(label("Flight height above ground"))
-        self.height = QDoubleSpinBox()
-        self.height.setRange(0, 1500)
-        self.height.setDecimals(0)
-        self.height.setSuffix(" m")
-        self.height.setSpecialValueText("unknown")
-        self.height.setMinimumWidth(120)
-        self.height.setToolTip("Only needed if the drone does not record it. Used for estimates only.")
+        fc = card()
+        fl = QVBoxLayout(fc)
+        fl.setContentsMargins(16, 12, 16, 12)
+        fl.setSpacing(6)
+        fl.addWidget(label("FLIGHT HEIGHT", "Section"))
+        fl.addWidget(label("Height above the take-off point", "H2"))
+        self.height_edit = LengthEdit(max_m=1500, typical=(20, 500))
+        self.height = self.height_edit.spin            # value in the unit shown (metres by default)
+        self.height.setToolTip("The flight height set in the drone app. Used only for the estimates above.")
         self.height.editingFinished.connect(self._reanalyze)
-        hrow.addWidget(self.height)
-        hrow.addStretch(1)
-        right.addLayout(hrow)
-        self.height_note = label("", "Muted", wrap=True)
-        right.addWidget(self.height_note)
+        self.height_edit.unit.currentIndexChanged.connect(lambda _i: self._height_note())
+        self.height_edit.changed.connect(self._height_note)
+        fl.addWidget(self.height_edit)
+        fl.addWidget(label("The height set in the drone's flight app (e.g. \u201cAltitude\u201d in DJI apps), "
+                           "measured from where the drone took off. Typical mapping flights: 60\u2013120 m "
+                           "(200\u2013400 ft). Used only for the estimates above \u2013 processing does not "
+                           "need it.", "Hint", wrap=True))
+        self.height_note = label("", "Good", wrap=True)
+        fl.addWidget(self.height_note)
+        right.addWidget(fc)
 
         self.blur_cb = QCheckBox("Leave out blurry photos (recommended)")
         self.blur_cb.setChecked(True)
@@ -444,19 +390,35 @@ class CheckPage(Page):
         _b, self.next_btn = self.footer("Back", "Next: choose outputs")
 
     def enter(self):
-        if self.s.flight_height:
-            self.height.setValue(self.s.flight_height)
+        self.height_edit.set_metres(self.s.flight_height)
         self._reanalyze()
 
     def _reanalyze(self):
-        h = self.height.value() or None
-        if self.height.value() == 0:
-            # only use a typed value; keep drone-recorded height otherwise
-            h = None
+        # only a typed value is used; otherwise the drone-recorded height (if any) is kept
+        h = self.height_edit.metres()
         self.s.flight_height = h
         s = ph.analyze(self.s.photos, h)
         self.s.survey = s
         self._show(s)
+
+    def _height_note(self, *_):
+        s = self.s.survey
+        warn = self.height_edit.warning()
+        if warn:
+            txt, name = "\u26A0 " + warn, "Warn"
+        elif s and s.height_source and s.height_source != "entered by user" and s.flight_height_m:
+            txt, name = (f"\u2714 The photos record about {s.flight_height_m:.0f} m "
+                         f"({s.flight_height_m * 3.2808:.0f} ft) ({s.height_source}) \u2013 you can leave this "
+                         "blank."), "Good"
+        elif s and not s.flight_height_m:
+            txt, name = ("This camera does not record its height. Type it to see the resolution and overlap "
+                         "estimates (optional)."), "Hint"
+        else:
+            txt, name = "", "Hint"
+        self.height_note.setObjectName(name)
+        theme.repolish(self.height_note)
+        self.height_note.setText(txt)
+        self.height_note.setVisible(bool(txt))
 
     def _blur_toggled(self, on):
         if self.s.job:
@@ -485,13 +447,7 @@ class CheckPage(Page):
             self.c_overlap.set("unknown", "needs flight height")
         self.blur_cb.setText(f"Leave out blurry photos ({len(s.blurry)} found)")
         self.blur_cb.setEnabled(bool(s.blurry))
-        if s.height_source and s.height_source != "entered by user":
-            self.height_note.setText(f"Flight height {s.flight_height_m:.0f} m ({s.height_source}).")
-        elif not s.flight_height_m:
-            self.height_note.setText("This camera does not record height above ground. Type it in "
-                                     "to see resolution and overlap estimates (optional).")
-        else:
-            self.height_note.setText("")
+        self._height_note()
         clear_layout(self.issues)
         if not s.issues:
             self.issues.addWidget(IssueBox("ok", "Photos look good", "Ready to process."))
@@ -540,10 +496,10 @@ class ChoiceCard(QFrame):
 
 class OptionsPage(Page):
     edit_gcps = Signal()
+    TITLE = "Quality and outputs"
 
     def __init__(self, session):
         super().__init__(session)
-        self.root.addWidget(label("Step 3 · Quality and outputs", "H1"))
         row = QHBoxLayout()
         self.cards: dict[str, ChoiceCard] = {}
         for key, p in presets.PRESETS.items():
@@ -608,11 +564,25 @@ class OptionsPage(Page):
         self.offset = QDoubleSpinBox()
         self.offset.setRange(-1000, 1000)
         self.offset.setDecimals(3)
+        self.offset.setSingleStep(0.1)
         self.offset.setSuffix(" m")
-        self.offset.setVisible(False)
-        cl.addWidget(self.offset)
-        self.heights.currentIndexChanged.connect(
-            lambda: self.offset.setVisible(self.heights.currentData() == "offset"))
+        self.offset.setFixedWidth(140)
+        self.offset_box = QWidget()
+        ob = QVBoxLayout(self.offset_box)
+        ob.setContentsMargins(0, 0, 0, 0)
+        ob.setSpacing(3)
+        orow = QHBoxLayout()
+        orow.addWidget(QLabel("Add to every height"))
+        orow.addWidget(self.offset)
+        orow.addStretch(1)
+        ob.addLayout(orow)
+        ob.addWidget(label("In metres. Positive raises, negative lowers all heights, e.g. \u22120.53 m to match "
+                           "a benchmark that reads 0.53 m lower than the drone.", "Hint", wrap=True))
+        self.offset_box.setVisible(False)
+        cl.addWidget(self.offset_box)
+        self.heights_hint = label("", "Hint", wrap=True)
+        cl.addWidget(self.heights_hint)
+        self.heights.currentIndexChanged.connect(self._heights_changed)
         cl.addSpacing(6)
         cl.addWidget(label("Accuracy (optional)", "H2"))
         grow = QHBoxLayout()
@@ -642,8 +612,21 @@ class OptionsPage(Page):
         self.crs.setCurrentIndex(max(0, self.crs.findData(o.target_crs)))
         self.heights.setCurrentIndex(max(0, self.heights.findData(o.heights)))
         self.offset.setValue(o.height_offset_m)
+        self._heights_changed()
         self.refresh_gcp_label()
         self._pick(self.preset)
+
+    def _heights_changed(self, *_):
+        k = self.heights.currentData()
+        self.offset_box.setVisible(k == "offset")
+        self.heights_hint.setText({
+            "as_recorded": "Heights stay as the drone GPS (or your control points) measured them. Most drones "
+                           "record heights above the ellipsoid, which in the Philippines are roughly 40\u201370 m "
+                           "higher than sea level.",
+            "egm96": "Converts drone (ellipsoid) heights to approximate mean sea level using the EGM96 geoid "
+                     "(about \u00b11 m). Choose this if your control points or maps use sea-level heights.",
+            "offset": ""}.get(k, ""))
+        self.heights_hint.setVisible(k != "offset")
 
     def refresh_gcp_label(self):
         o = self.s.job.options

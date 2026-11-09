@@ -64,8 +64,8 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         shell: pwsh
         run: |
-          $f = @((Get-ChildItem dist\WangDoodletheGIS_Setup_*_Online.exe).FullName, "dist\build-info.json")
-          $off = Get-ChildItem dist\WangDoodletheGIS_Setup_*_Offline.exe -ErrorAction SilentlyContinue
+          $f = @((Get-ChildItem dist\WhangDoodleGIS_Setup_*_Online.exe).FullName, "dist\build-info.json")
+          $off = Get-ChildItem dist\WhangDoodleGIS_Setup_*_Offline.exe -ErrorAction SilentlyContinue
           if ($off -and $off.Length -lt 2000MB) { $f += $off.FullName }
           elseif ($off) { Write-Host "Offline installer is over GitHub's 2 GB release limit - kept as a build artifact only." }
           "list<<EOF" >> $env:GITHUB_OUTPUT
@@ -79,14 +79,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && format('WangDoodletheGIS {0}', github.ref_name) || format('WangDoodletheGIS {0} (build {1})', steps.files.outputs.version, github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && format('WhangDoodleGIS {0}', github.ref_name) || format('WhangDoodleGIS {0} (build {1})', steps.files.outputs.version, github.run_number) }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           target_commitish: ${{ github.sha }}
           files: ${{ steps.files.outputs.list }}
           body: |
             **Which file?**
-            - `WangDoodletheGIS_Setup_*_Online.exe` - small; downloads the OpenDroneMap engine during setup (internet needed once).
-            - `WangDoodletheGIS_Setup_*_Offline.exe` - everything included; install on computers without internet.
+            - `WhangDoodleGIS_Setup_*_Online.exe` - small; downloads the OpenDroneMap engine during setup (internet needed once).
+            - `WhangDoodleGIS_Setup_*_Offline.exe` - everything included; install on computers without internet.
 
             Tests on Windows for this build: install test **${{ steps.smoke.outcome }}**, real OpenDroneMap test **${{ steps.odm.outcome }}**.
             Windows may show "Windows protected your PC" because the installer is not code-signed: click *More info* > *Run anyway*.
@@ -95,9 +95,9 @@ jobs:
         if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: WangDoodletheGIS-installers
+          name: WhangDoodleGIS-installers
           path: |
-            dist/WangDoodletheGIS_Setup_*.exe
+            dist/WhangDoodleGIS_Setup_*.exe
             dist/build-info.json
           retention-days: 30
 

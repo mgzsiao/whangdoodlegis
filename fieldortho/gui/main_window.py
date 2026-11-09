@@ -1,24 +1,96 @@
-"""Main window: home screen plus a five-step wizard."""
+"""Main window: navigation rail, title bar, pages, status bar."""
 from __future__ import annotations
 
 import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-                               QPushButton, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import APP_NAME, AUTHOR, DISCLAIMER, DISCLAIMER_SHORT, __version__
-from ..core import engine, jobs, photos as ph
+from .. import APP_NAME, DISCLAIMER_SHORT, __version__
+from ..core import engine, jobs, photos as ph, system
 from ..core.settings import Settings
+from . import theme
+from .about import AboutDialog, SupportDialog, logo
 from .dialogs import GcpDialog, SettingsDialog
+from .georef_page import GeorefPage
+from .jobs_page import JobsPage
+from .model_page import ModelPage
 from .pages_run import ProcessPage, ResultsPage
 from .pages_setup import CheckPage, HomePage, OptionsPage, PhotosPage
-from .georef_page import GeorefPage
-from .model_page import ModelPage
 from .session import Session
+from .widgets import label
 
 STEPS = ["Photos", "Check", "Outputs", "Processing", "Results"]
+
+
+class NavButton(QPushButton):
+    """A navigation entry: icon + text, highlighted when its section is open."""
+
+    def __init__(self, icon: str, text: str, checkable: bool = True):
+        super().__init__()
+        self.setObjectName("NavItem")
+        self.setCheckable(checkable)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(38)
+        self.setAccessibleName(text)
+        h = QHBoxLayout(self)
+        h.setContentsMargins(10, 0, 10, 0)
+        h.setSpacing(12)
+        self.ic = QLabel(theme.ICONS[icon])
+        self.ic.setFixedWidth(18)
+        self.tx = QLabel(text)
+        for lab in (self.ic, self.tx):
+            lab.setAttribute(Qt.WA_TransparentForMouseEvents)
+            h.addWidget(lab)
+        h.addStretch(1)
+        self.toggled.connect(self._style)
+        self._style(False)
+
+    def _style(self, on):
+        self.ic.setStyleSheet(f"font-family: {theme.ICON_FONT}; font-size: 16px; background: transparent; "
+                              f"color: {theme.HIGHLIGHT if on else theme.NAV_INK};")
+        self.tx.setStyleSheet(f"font-size: 13px; background: transparent; color: {'white' if on else theme.NAV_INK};"
+                              f" font-weight: {600 if on else 400};")
+
+
+class Stepper(QWidget):
+    """1 Photos — 2 Check — 3 Outputs — 4 Processing — 5 Results"""
+
+    def __init__(self):
+        super().__init__()
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(6)
+        self.dots, self.names, self.lines = [], [], []
+        for i, s in enumerate(STEPS):
+            d = QLabel(str(i + 1))
+            d.setFixedSize(24, 24)
+            d.setAlignment(Qt.AlignCenter)
+            t = QLabel(s)
+            h.addWidget(d)
+            h.addWidget(t)
+            self.dots.append(d)
+            self.names.append(t)
+            if i < len(STEPS) - 1:
+                ln = QFrame()
+                ln.setFixedSize(26, 2)
+                h.addWidget(ln)
+                self.lines.append(ln)
+        self.set_active(0)
+
+    def set_active(self, idx: int):
+        for i, (d, t) in enumerate(zip(self.dots, self.names)):
+            done, cur = i < idx, i == idx
+            d.setText("✔" if done else str(i + 1))
+            bg = theme.ACCENT if (done or cur) else "#E3E8F0"
+            d.setStyleSheet(f"background: {bg}; color: {'white' if (done or cur) else theme.MUTED}; "
+                            "border-radius: 12px; font-weight: 600; font-size: 12px;")
+            t.setStyleSheet(f"color: {theme.INK if cur else theme.MUTED}; font-weight: {600 if cur else 400};"
+                            "background: transparent;")
+        for i, ln in enumerate(self.lines):
+            ln.setStyleSheet(f"background: {theme.ACCENT if i < idx else theme.LINE};")
 
 
 class MainWindow(QMainWindow):
@@ -28,47 +100,24 @@ class MainWindow(QMainWindow):
         self.s = Session(settings, engine.detect(settings.odm_path, settings.engine_mode,
                                                  settings.docker_image))
         self.setWindowTitle(f"{APP_NAME} {__version__}")
-        self.resize(1280, 820)
+        self.resize(1360, 860)
+        self.setMinimumSize(1100, 700)
         central = QWidget()
         lay = QHBoxLayout(central)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
+        lay.addWidget(self._build_nav())
 
-        # sidebar with steps
-        self.sidebar = QFrame()
-        self.sidebar.setObjectName("Sidebar")
-        self.sidebar.setFixedWidth(210)
-        sl = QVBoxLayout(self.sidebar)
-        sl.setContentsMargins(22, 26, 16, 20)
-        sl.setSpacing(14)
-        brand = QLabel(APP_NAME)
-        brand.setStyleSheet("font-size: 18px; font-weight: 700; color: #1F6F5C;")
-        sl.addWidget(brand)
-        self.job_label = QLabel("")
-        self.job_label.setObjectName("Muted")
-        self.job_label.setWordWrap(True)
-        sl.addWidget(self.job_label)
-        sl.addSpacing(10)
-        self.step_labels = []
-        for i, name in enumerate(STEPS):
-            lab = QLabel(f"{i + 1}   {name}")
-            lab.setObjectName("StepTodo")
-            sl.addWidget(lab)
-            self.step_labels.append(lab)
-        sl.addStretch(1)
-        credit = QLabel(f"Version {__version__}\n{DISCLAIMER_SHORT}")
-        credit.setObjectName("Muted")
-        credit.setWordWrap(True)
-        credit.setStyleSheet("font-size: 11px;")
-        sl.addWidget(credit)
-        about = QPushButton("About")
-        about.setObjectName("Link")
-        about.clicked.connect(self.show_about)
-        sl.addWidget(about, 0, Qt.AlignLeft)
-        lay.addWidget(self.sidebar)
-
+        right = QWidget()
+        right.setObjectName("Content")
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(0)
+        rv.addWidget(self._build_header())
         self.stack = QStackedWidget()
-        lay.addWidget(self.stack, 1)
+        rv.addWidget(self.stack, 1)
+        rv.addWidget(self._build_status())
+        lay.addWidget(right, 1)
         self.setCentralWidget(central)
 
         s = self.s
@@ -80,18 +129,21 @@ class MainWindow(QMainWindow):
         self.results = ResultsPage(s)
         self.georef = GeorefPage(s)
         self.models = ModelPage(s)
-        for p in (self.home, self.photos, self.check, self.options, self.process, self.results, self.georef,
-                  self.models):
+        self.jobs = JobsPage(s)
+        ob = QPushButton("Open job folder…")
+        ob.clicked.connect(self._browse_job)
+        self.jobs.set_actions([ob])
+        self.wizard = [self.photos, self.check, self.options, self.process, self.results]
+        for p in (self.home, *self.wizard, self.georef, self.models, self.jobs):
             self.stack.addWidget(p)
+            p.heading_changed.connect(self._refresh_header)
+        self._last_wizard = None
 
         self.home.new_job.connect(self.new_job)
-        self.home.open_job.connect(self.open_job)
-        self.home.open_settings.connect(self.open_settings)
-        self.home.about.connect(self.show_about)
+        self.home.open_row.connect(self.open_row)
+        self.jobs.open_row.connect(self.open_row)
         self.home.open_georef.connect(lambda: self.show_page(self.georef))
         self.home.open_models.connect(lambda: self.show_page(self.models))
-        self.georef.home.connect(self.show_home)
-        self.models.home.connect(self.show_home)
         self.results.model.connect(self._model_from_job)
         self.photos.go_back.connect(self.show_home)
         self.photos.go_next.connect(self._photos_done)
@@ -106,27 +158,164 @@ class MainWindow(QMainWindow):
         self.results.new_job.connect(self.new_job)
         self.show_home()
 
+    # ------------------------------------------------------------------ chrome
+    def _build_nav(self) -> QFrame:
+        nav = QFrame()
+        nav.setObjectName("Nav")
+        nav.setFixedWidth(236)
+        v = QVBoxLayout(nav)
+        v.setContentsMargins(14, 18, 14, 16)
+        v.setSpacing(2)
+        brand = QHBoxLayout()
+        brand.setSpacing(10)
+        brand.addWidget(logo(36))
+        bt = QVBoxLayout()
+        bt.setSpacing(0)
+        bt.addWidget(label(APP_NAME, "Brand"))
+        bt.addWidget(label("Offline mapping toolkit", "BrandSub"))
+        brand.addLayout(bt, 1)
+        v.addLayout(brand)
+        v.addSpacing(18)
+        self.nav: dict[str, NavButton] = {}
+
+        def section(t):
+            v.addSpacing(8)
+            s = label(t, "NavSection")
+            s.setContentsMargins(10, 0, 0, 4)
+            v.addWidget(s)
+
+        section("TOOLS")
+        for key, icon, text, fn in (("home", "home", "Home", self.show_home),
+                                    ("drone", "drone", "Drone mapping", self._nav_drone),
+                                    ("georef", "georef", "Georeference a map", lambda: self.show_page(self.georef)),
+                                    ("flood", "flood", "Flood & landslide", lambda: self.show_page(self.models))):
+            b = NavButton(icon, text)
+            b.clicked.connect(fn)
+            v.addWidget(b)
+            self.nav[key] = b
+        section("PROJECTS")
+        b = NavButton("jobs", "Jobs")
+        b.clicked.connect(lambda: self.show_page(self.jobs))
+        v.addWidget(b)
+        self.nav["jobs"] = b
+        b = NavButton("settings", "Settings", checkable=False)
+        b.clicked.connect(self.open_settings)
+        v.addWidget(b)
+        v.addStretch(1)
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background: #22355A;")
+        v.addWidget(sep)
+        v.addSpacing(8)
+        sup = QPushButton("♥  Support the Developer")
+        sup.setObjectName("NavLink")
+        sup.setCursor(Qt.PointingHandCursor)
+        sup.clicked.connect(self.show_support)
+        v.addWidget(sup)
+        ab = QPushButton("ⓘ  About " + APP_NAME)
+        ab.setObjectName("NavLink")
+        ab.setCursor(Qt.PointingHandCursor)
+        ab.clicked.connect(self.show_about)
+        v.addWidget(ab)
+        v.addSpacing(6)
+        foot = label(f"Version {__version__} · {DISCLAIMER_SHORT}", "NavFoot", wrap=True)
+        foot.setTextInteractionFlags(Qt.NoTextInteraction)
+        v.addWidget(foot)
+        return nav
+
+    def _build_header(self) -> QFrame:
+        hd = QFrame()
+        hd.setObjectName("Header")
+        hd.setFixedHeight(68)
+        h = QHBoxLayout(hd)
+        h.setContentsMargins(24, 8, 20, 8)
+        h.setSpacing(12)
+        tv = QVBoxLayout()
+        tv.setSpacing(0)
+        self.crumb = label("", "Crumb")
+        self.title = label("", "H1")
+        tv.addWidget(self.crumb)
+        tv.addWidget(self.title)
+        h.addLayout(tv)
+        h.addStretch(1)
+        self.stepper = Stepper()
+        h.addWidget(self.stepper)
+        self.hdr_actions = QHBoxLayout()
+        self.hdr_actions.setSpacing(8)
+        h.addLayout(self.hdr_actions)
+        self._action_widgets: list[QWidget] = []
+        return hd
+
+    def _build_status(self) -> QFrame:
+        st = QFrame()
+        st.setObjectName("Status")
+        st.setFixedHeight(30)
+        h = QHBoxLayout(st)
+        h.setContentsMargins(16, 0, 16, 0)
+        h.setSpacing(16)
+        self.status_left = label("", "StatusText")
+        h.addWidget(self.status_left)
+        h.addStretch(1)
+        self.status_dot = QLabel("●")
+        h.addWidget(self.status_dot)
+        self.status_right = label("", "StatusText")
+        h.addWidget(self.status_right)
+        return st
+
+    def _refresh_status(self):
+        root = self.s.settings.jobs_root
+        free = system.free_disk_gb(root) if os.path.isdir(root) else 0
+        self.status_left.setText(f"Jobs folder: {root}" + (f"   ·   Free disk: {free:,.0f} GB" if free else ""))
+        e = self.s.engine
+        self.status_dot.setStyleSheet(f"color: {theme.OK if e.ok else theme.ERROR}; font-size: 10px;")
+        self.status_right.setText((e.message if e.ok else "Processing engine not installed") +
+                                  f"   ·   {system.describe_machine()}")
+
+    def _refresh_header(self):
+        page = self.stack.currentWidget()
+        crumb, title = page.heading()
+        wizard = page in self.wizard
+        if wizard:
+            crumb = "Drone mapping  ›  " + (self.s.job.name if self.s.job else "New job")
+        self.crumb.setText(crumb)
+        self.title.setText(title)
+        self.stepper.setVisible(wizard)
+        if wizard:
+            self.stepper.set_active(self.wizard.index(page))
+        aw = page.header_actions()
+        for w in self._action_widgets:
+            w.setVisible(w is aw)
+        if aw is not None and aw not in self._action_widgets:
+            self.hdr_actions.addWidget(aw)
+            self._action_widgets.append(aw)
+            aw.setVisible(True)
+
     # ------------------------------------------------------------------ navigation
     def show_page(self, page):
         self.stack.setCurrentWidget(page)
-        wizard = page not in (self.home, self.georef, self.models)
-        self.sidebar.setVisible(wizard)
-        idx = {self.photos: 0, self.check: 1, self.options: 2, self.process: 3, self.results: 4}.get(page, -1)
-        for i, lab in enumerate(self.step_labels):
-            name = STEPS[i]
-            if i < idx:
-                lab.setText(f"✔   {name}")
-                lab.setObjectName("StepDone")
-            elif i == idx:
-                lab.setText(f"{i + 1}   {name}")
-                lab.setObjectName("StepActive")
-            else:
-                lab.setText(f"{i + 1}   {name}")
-                lab.setObjectName("StepTodo")
-            lab.style().unpolish(lab)
-            lab.style().polish(lab)
-        self.job_label.setText(self.s.job.name if self.s.job else "New job")
+        if page in self.wizard:
+            self._last_wizard = page
+        key = ("home" if page is self.home else "georef" if page is self.georef else
+               "flood" if page is self.models else "jobs" if page is self.jobs else "drone")
+        for k, b in self.nav.items():
+            b.setChecked(k == key)
         page.enter()
+        self._refresh_header()
+        self._refresh_status()
+
+    def _busy(self) -> bool:
+        if self.process.busy():
+            QMessageBox.information(self, "A job is processing",
+                                    "A drone mapping job is still processing. Open “Drone mapping” to follow it, "
+                                    "or cancel it there before starting or opening another job.")
+            return True
+        return False
+
+    def _nav_drone(self):
+        if self.s.job is not None and self._last_wizard is not None:
+            self.show_page(self._last_wizard)
+        else:
+            self.new_job()
 
     def _model_from_job(self):
         job = self.s.job
@@ -134,10 +323,15 @@ class MainWindow(QMainWindow):
         self.models.use_job(job)
 
     def show_home(self):
-        self.s.job = None
+        if not self.process.busy():
+            self.s.job = None
+            self._last_wizard = None
         self.show_page(self.home)
 
     def new_job(self):
+        if self._busy():
+            self.show_page(self.process)
+            return
         self.s.job = None
         self.s.photos, self.s.survey, self.s.flight_height = [], None, None
         self.photos.name.clear()
@@ -146,16 +340,35 @@ class MainWindow(QMainWindow):
         self.show_page(self.photos)
 
     def show_about(self):
-        QMessageBox.about(self, f"About {APP_NAME}",
-                          f"<h3>{APP_NAME} {__version__}</h3><p>Developed by {AUTHOR}.</p>"
-                          f"<p>{DISCLAIMER.replace(f'Developed by {AUTHOR}. ', '')}</p>"
-                          "<p>Processing engine: OpenDroneMap (AGPL v3). Licences: see LICENSE-NOTICE.txt "
-                          "in the program folder.</p>")
+        d = AboutDialog(self)
+        d.exec()
+
+    def show_support(self):
+        SupportDialog(self).exec()
 
     def open_settings(self):
         if SettingsDialog(self.s, self).exec():
-            if self.stack.currentWidget() is self.home:
-                self.home.enter()
+            self.stack.currentWidget().enter()
+            self._refresh_status()
+
+    def open_row(self, row):
+        if row.kind == "drone":
+            self.open_job(row.ref)
+        elif row.kind == "georef":
+            self.show_page(self.georef)
+            self.georef.load_session(row.ref)
+        else:
+            self.show_page(self.models)
+            self.models.load_scenario(row.ref)
+
+    def _browse_job(self):
+        d = QFileDialog.getExistingDirectory(self, f"Open a {APP_NAME} job folder", self.s.settings.jobs_root)
+        if d:
+            if jobs.Job.is_job_dir(d):
+                self.open_job(d)
+            else:
+                QMessageBox.information(self, "Not a job folder",
+                                        f"That folder is not a {APP_NAME} drone mapping job (no job.json inside).")
 
     # ------------------------------------------------------------------ steps
     def _photos_done(self):
@@ -188,6 +401,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ existing jobs
     def open_job(self, job_dir: str):
+        if self._busy():
+            return
         try:
             job = jobs.Job.load(job_dir)
         except Exception as e:

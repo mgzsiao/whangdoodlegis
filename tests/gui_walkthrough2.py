@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
@@ -15,6 +16,7 @@ os.makedirs(OUT, exist_ok=True)
 tmp = tempfile.mkdtemp()
 os.environ["HOME"] = tmp
 os.environ["XDG_CONFIG_HOME"] = os.path.join(tmp, "cfg")
+os.environ["APPDATA"] = os.path.join(tmp, "cfg")          # Windows: keep the real settings untouched
 os.environ["FAKE_ODM_DELAY"] = "0.01"
 
 import numpy as np  # noqa: E402
@@ -36,7 +38,7 @@ app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
 st = Settings(odm_path=os.path.join(HERE, "fake_odm"), jobs_root=os.path.join(tmp, "jobs"), threads=2)
 # one processed job so 'Export...' and the job list have content
-photos = ph.scan_folder("/tmp/data/aukerman/images")
+photos = ph.scan_folder(os.environ.get("FIELDORTHO_TEST_PHOTOS", "/tmp/data/aukerman/images"))
 job = jobs.Job(name="Aukerman Park", job_dir=jobs.unique_job_dir(st.jobs_root, "Aukerman Park"),
                photos=[p.path for p in photos][:40])
 assert JobProcessor(job, st, engine.detect(st.odm_path)).run(), job.error
@@ -119,6 +121,9 @@ wait(lambda: m.hand is not None, 120)
 m.rise.setValue(2.5)
 m._run_flood()
 shot("24_model_flood_river")
+scen = os.path.join(tmp, "scenarios")
+os.makedirs(scen, exist_ok=True)
+m._save_scenario("flood", scen, "demo_river_2.5m", "EPSG:32651", "✔ Exported · test")
 m.fmode.setCurrentIndex(1)
 m.connect.setCurrentIndex(m.connect.findData("edges"))
 m.rise.setValue(4.0)
@@ -141,6 +146,7 @@ wait(lambda: m.slide_res is not None, 300)
 m.bg_group.button(0).setChecked(True)
 m._show_background()
 shot("26_model_landslide")
+m._save_scenario("landslide", scen, "demo_landslide", "EPSG:32651", "✔ Exported · test")
 print("landslide stats", {k: round(v, 2) for k, v in m.slide_res.stats.items()})
 
 # ---------------------------------------------------------------- export dialog
@@ -153,4 +159,43 @@ dlg.crs.set_code("EPSG:3125")
 dlg.show()
 pump(30)
 shot("28_export_dialog", dlg)
+dlg.close()
+
+# ---------------------------------------------------------------- jobs list, dialogs
+w.show_page(w.jobs)
+shot("29_jobs")
+from fieldortho.gui.about import AboutDialog, SupportDialog  # noqa: E402
+from fieldortho.gui.inputs import CoordDialog  # noqa: E402
+for name, d in (("30_about", AboutDialog(w)), ("31_support", SupportDialog(w)),
+                ("32_coord_dialog", CoordDialog(True, "Luzon 1911", 812.4, 655.0, w))):
+    d.show()
+    pump(20)
+    if name == "32_coord_dialog":
+        d.lon.setText("124 48 0")
+        d.lat.deg.setText("8"); d.lat.min.setText("61"); d.lat._edited("61")
+        pump(10)
+    shot(name, d)
+    d.close()
+# reopen the georef session and the scenarios from the Jobs list
+from fieldortho.gui.jobs_page import collect  # noqa: E402
+rows = collect(w.s.settings)
+print("jobs list:", [(r.kind, r.name, r.status) for r in rows])
+assert {r.kind for r in rows} >= {"drone", "georef", "flood", "landslide"}, rows
+for r in rows:
+    if r.kind == "flood":
+        w.open_row(r)
+        wait(lambda: m.flood_res is not None and m.hand is not None, 120)
+        shot("33_reopened_flood")
+        assert abs(m.rise.value() - 2.5) < 1e-6
+    elif r.kind == "landslide":
+        m.slide_res = None
+        w.open_row(r)
+        wait(lambda: m.slide_res is not None, 300)
+        shot("34_reopened_landslide")
+    elif r.kind == "georef":
+        g.gcps = []
+        w.open_row(r)
+        pump()
+        assert len(g.gcps) >= 9 and g.fit is not None, len(g.gcps)
+        shot("35_reopened_georef")
 print("OK")

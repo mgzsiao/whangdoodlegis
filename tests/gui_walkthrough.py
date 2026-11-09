@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 OUT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "shots")
@@ -12,6 +13,7 @@ os.makedirs(OUT, exist_ok=True)
 tmp = tempfile.mkdtemp()
 os.environ["HOME"] = tmp
 os.environ["XDG_CONFIG_HOME"] = os.path.join(tmp, "cfg")
+os.environ["APPDATA"] = os.path.join(tmp, "cfg")          # Windows: keep the real settings untouched
 os.environ.setdefault("FAKE_ODM_DELAY", "0.4")
 
 from PySide6.QtCore import QTimer  # noqa: E402

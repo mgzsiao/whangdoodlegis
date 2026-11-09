@@ -22,13 +22,15 @@ from .workers import Task
 
 
 class ProcessPage(Page):
+    def heading(self):
+        return self.CRUMB, self.title.text()
+
     finished = Signal(bool)
     change_settings = Signal()
 
     def __init__(self, session):
         super().__init__(session)
-        self.title = label("Step 4 · Processing", "H1")
-        self.root.addWidget(self.title)
+        self.title = label("Processing", "H1")       # shown in the window's title bar
         c = card()
         cl = QVBoxLayout(c)
         cl.setContentsMargins(24, 20, 24, 20)
@@ -150,7 +152,8 @@ class ProcessPage(Page):
             b.setVisible(False)
         self.cancel_btn.setVisible(True)
         self.cancel_btn.setEnabled(True)
-        self.title.setText(f"Step 4 · Processing “{job.name}”")
+        self.title.setText("Processing")
+        self.heading_changed.emit()
         self.pct = 0.0
         self.bar.setValue(0)
         self._mark("prepare")
@@ -235,22 +238,19 @@ class ProcessPage(Page):
 # ============================================================================
 
 class ResultsPage(Page):
+    def heading(self):
+        return self.CRUMB, self.title.text()
+
     new_job = Signal()
     home = Signal()
     model = Signal()
 
     def __init__(self, session):
         super().__init__(session)
-        top = QHBoxLayout()
-        self.title = label("Map ready", "H1")
-        top.addWidget(self.title, 1)
-        hb = QPushButton("⌂  Home")
-        hb.clicked.connect(self.home.emit)
-        top.addWidget(hb)
-        nb = QPushButton("＋  New job")
+        self.title = label("Map ready", "H1")       # shown in the window's title bar
+        nb = QPushButton("\uFF0B  New mapping job")
         nb.clicked.connect(self.new_job.emit)
-        top.addWidget(nb)
-        self.root.addLayout(top)
+        self.set_actions([nb])
 
         body = QHBoxLayout()
         body.setSpacing(16)
@@ -278,14 +278,14 @@ class ResultsPage(Page):
         self.notes = QVBoxLayout()
         right.addLayout(self.notes)
         right.addStretch(1)
-        self.export_btn = QPushButton("\u2B07  Export\u2026  (formats & coordinate system)")
+        self.export_btn = QPushButton("Export\u2026  (formats && coordinate system)")
         self.export_btn.setObjectName("Primary")
         self.export_btn.clicked.connect(self._export)
         right.addWidget(self.export_btn)
-        self.model_btn = QPushButton("\U0001F30A  Flood & landslide model")
+        self.model_btn = QPushButton("Flood && landslide model")
         self.model_btn.clicked.connect(self.model.emit)
         right.addWidget(self.model_btn)
-        self.open_btn = QPushButton("\U0001F4C2  Open GIS folder")
+        self.open_btn = QPushButton("Open GIS folder")
         self.open_btn.clicked.connect(lambda: system.open_path(self.s.job.gis_dir))
         right.addWidget(self.open_btn)
         self.qgis_btn = QPushButton("Open in QGIS")
@@ -308,7 +308,8 @@ class ResultsPage(Page):
         job = self.s.job
         sm = job.summary
         files = sm.get("files", {})
-        self.title.setText(f"✔  {job.name}")
+        self.title.setText("Map ready")
+        self.heading_changed.emit()
         self.tabs.clear()
         self.views.clear()
         names = {"ortho": "Orthomosaic", "dsm": "Surface model (DSM)", "dtm": "Terrain model (DTM)"}

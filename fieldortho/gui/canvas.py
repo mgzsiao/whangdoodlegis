@@ -128,6 +128,10 @@ class MapCanvas(QGraphicsView):
             self.fitInView(self.base.sceneBoundingRect(), Qt.KeepAspectRatio)
             self._fitted = True
 
+    def zoom(self, f: float):
+        self._fitted = False
+        self.scale(f, f)
+
     def zoom_to(self, x, y, scale_px: float = 4.0):
         self.resetTransform()
         self.scale(scale_px, scale_px)
@@ -170,3 +174,39 @@ class MapCanvas(QGraphicsView):
     def set_pick_cursor(self, on: bool):
         self.pick_cursor = on
         self.viewport().setCursor(Qt.CrossCursor if on else Qt.OpenHandCursor)
+
+
+def map_card(canvas: MapCanvas, extra=()):
+    """The map inside a card, with zoom in / zoom out / whole map buttons above it."""
+    from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QVBoxLayout
+    from . import theme
+    card = QFrame()
+    card.setObjectName("Card")
+    v = QVBoxLayout(card)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(0)
+    bar = QHBoxLayout()
+    bar.setContentsMargins(10, 6, 10, 6)
+    bar.setSpacing(4)
+    for icon, tip, fn in (("zoom_in", "Zoom in", lambda: canvas.zoom(1.4)),
+                          ("zoom_out", "Zoom out", lambda: canvas.zoom(1 / 1.4)),
+                          ("fit", "Show the whole map", canvas.fit)):
+        b = QPushButton(theme.ICONS[icon])
+        b.setObjectName("Tool")
+        b.setToolTip(tip)
+        b.clicked.connect(fn)
+        bar.addWidget(b)
+    bar.addSpacing(8)
+    for w in extra:
+        if isinstance(w, int):
+            bar.addSpacing(w)
+        else:
+            bar.addWidget(w)
+    bar.addStretch(1)
+    v.addLayout(bar)
+    line = QFrame()
+    line.setFixedHeight(1)
+    line.setStyleSheet(f"background: {theme.LINE};")
+    v.addWidget(line)
+    v.addWidget(canvas, 1)
+    return card

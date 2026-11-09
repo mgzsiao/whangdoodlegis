@@ -29,7 +29,7 @@ class CrsPicker(QWidget):
         self.combo.addItem("Other coordinate system (type EPSG code or PROJ text)…", OTHER)
         lay.addWidget(self.combo)
         self.custom = QLineEdit()
-        self.custom.setPlaceholderText("e.g. EPSG:32651")
+        self.custom.setPlaceholderText("EPSG number, e.g. 32651")
         self.custom.setVisible(False)
         lay.addWidget(self.custom)
         self.note = QLabel("")
@@ -67,7 +67,10 @@ class CrsPicker(QWidget):
         self.custom.setVisible(other)
         c = self.code()
         if c is None:
-            self.note.setText("⚠ Not a valid coordinate system." if other and self.custom.text() else "")
+            t = self.custom.text().strip()
+            self.note.setText(("⚠ Not a known coordinate system. Type an EPSG number such as 32651 "
+                               "(UTM 51N) or 3125 (PRS92 zone 5).") if other and t else
+                              ("Type an EPSG number, e.g. 32651 for UTM zone 51N." if other else ""))
             return
         txt = f"Units: {crsmod.units_label(c)}."
         if self.lonlat:
@@ -81,7 +84,7 @@ class CrsPicker(QWidget):
             pass
         else:
             try:
-                txt = crsmod.resolve(c).name + ". " + txt
+                txt = "✔ " + crsmod.resolve(c).name + ". " + txt
             except Exception:
                 pass
         self.note.setText(txt)

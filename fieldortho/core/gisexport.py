@@ -12,7 +12,7 @@ GIS/
 """
 from __future__ import annotations
 
-from .. import APP_NAME, DISCLAIMER
+from .. import APP_NAME, DISCLAIMER_PARAGRAPHS
 
 import csv
 import json
@@ -577,6 +577,8 @@ def _write_readme(path: str, job_name: str, res: ExportResult) -> None:
         lines += ["", "Notes", "-----"] + [f"- {w}" for w in res.warnings]
     lines += ["", "Open the .tif and .shp files directly in QGIS, ArcGIS Pro or Global Mapper."]
     import textwrap
-    lines += ["", "Disclaimer", "----------"] + textwrap.wrap(DISCLAIMER, 90)
+    lines += ["", "Disclaimer", "----------"]
+    for para in DISCLAIMER_PARAGRAPHS:
+        lines += textwrap.wrap(para, 90) + [""]
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

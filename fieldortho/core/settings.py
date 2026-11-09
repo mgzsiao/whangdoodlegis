@@ -1,23 +1,44 @@
 """Persistent app settings (stored per user)."""
 from __future__ import annotations
 
-from .. import APP_NAME
+from .. import APP_NAME, OLD_APP_NAMES
 
 import json
 import os
+import shutil
 from dataclasses import dataclass, asdict, field
 
 from .system import IS_WINDOWS, cpu_count
 
 
-def config_dir() -> str:
+def _config_base() -> str:
     if IS_WINDOWS:
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    else:
-        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    d = os.path.join(base, APP_NAME)
+        return os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+
+
+def config_dir() -> str:
+    d = os.path.join(_config_base(), APP_NAME)
+    if not os.path.isdir(d):
+        _migrate_old_config(d)
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def _migrate_old_config(new_dir: str) -> None:
+    """First start after a rename: carry over settings (jobs folder, recent jobs, engine path)
+    and the activity list from the newest earlier app name."""
+    for old in OLD_APP_NAMES:
+        src = os.path.join(_config_base(), old)
+        if os.path.isfile(os.path.join(src, "settings.json")):
+            try:
+                os.makedirs(new_dir, exist_ok=True)
+                for f in ("settings.json", "activity.json"):
+                    if os.path.isfile(os.path.join(src, f)):
+                        shutil.copy2(os.path.join(src, f), os.path.join(new_dir, f))
+            except OSError:
+                pass
+            return
 
 
 def default_jobs_root() -> str:

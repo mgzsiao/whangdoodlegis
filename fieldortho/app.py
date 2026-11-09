@@ -1,4 +1,4 @@
-"""WangDoodletheGIS entry point (GUI)."""
+"""WhangDoodleGIS entry point (GUI)."""
 from __future__ import annotations
 
 import os

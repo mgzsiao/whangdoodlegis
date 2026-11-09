@@ -44,6 +44,8 @@ class SettingsDialog(QDialog):
         self.threads.setValue(min(session.settings.threads, system.cpu_count()))
         self.threads.setToolTip("Lower this to keep the computer usable while processing.")
         form.addRow("CPU threads to use", self.threads)
+        form.addRow("", label(f"This computer has {system.cpu_count()}. Use fewer to keep the laptop usable "
+                              "while a job processes.", "Muted", wrap=True))
         row2 = QHBoxLayout()
         self.jobs = QLineEdit(session.settings.jobs_root)
         row2.addWidget(self.jobs, 1)
@@ -51,6 +53,8 @@ class SettingsDialog(QDialog):
         b2.clicked.connect(lambda: self._browse_into(self.jobs, "Folder for jobs"))
         row2.addWidget(b2)
         form.addRow("Jobs folder", row2)
+        form.addRow("", label("Where new drone mapping jobs are saved. Each job needs several GB; choose a drive "
+                              "with plenty of free space.", "Muted", wrap=True))
         lay.addLayout(form)
         self.status_box = QVBoxLayout()
         lay.addLayout(self.status_box)
@@ -115,6 +119,17 @@ class SettingsDialog(QDialog):
 
     def _save(self):
         st = self.s.settings
+        root = self.jobs.text().strip()
+        if root:
+            try:
+                os.makedirs(root, exist_ok=True)
+                probe = os.path.join(root, ".write_test")
+                with open(probe, "w") as fh:
+                    fh.write("ok")
+                os.remove(probe)
+            except OSError as e:
+                QMessageBox.warning(self, "Jobs folder", f"Cannot use this folder for jobs:\n{root}\n\n{e}")
+                return
         st.odm_path = self.odm.text().strip()
         st.engine_mode = self.mode.currentData()
         st.threads = self.threads.value()

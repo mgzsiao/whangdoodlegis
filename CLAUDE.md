@@ -1,6 +1,6 @@
 # CLAUDE.md – handover for building the FieldOrtho Windows installer
 
-You are picking up FieldOrtho (shipped as **WangDoodletheGIS** since 0.2.2 – see "Naming" below) on the owner's **Windows** PC. The code was written and tested on
+You are picking up FieldOrtho (shipped as **WhangDoodleGIS** since 0.3.0 – see "Naming" below) on the owner's **Windows** PC. The code was written and tested on
 Linux; it has never been built or run on real Windows. Your job: **build, test and install the
 Windows installer on this PC**, fixing any Windows-only problems you find, without changing
 results (see "Do not change" below).
@@ -38,16 +38,16 @@ build script, CI test scripts), `data/us_nga_egm96_15.tif` (EGM96 geoid, already
    ```powershell
    powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1 -Python "<path\to\python.exe>"
    ```
-   Output in `dist\`: `WangDoodletheGIS_Setup_<version>_Online.exe`, `WangDoodletheGIS_Setup_<version>_Offline.exe`,
+   Output in `dist\`: `WhangDoodleGIS_Setup_<version>_Online.exe`, `WhangDoodleGIS_Setup_<version>_Offline.exe`,
    `build-info.json`. `packaging\installer.iss` has never been compiled – fix any Inno Setup
    compile errors you hit (keep both editions and the silent-install behaviour).
 4. **Install and verify on this PC.** `packaging\ci\smoke_test.ps1` automates this (silent install
    of the Online edition, engine download, CLI, georeferencer, GUI start). Run it from the project
    folder in an elevated PowerShell, or do the same checks by hand:
-   - `"C:\Program Files\WangDoodletheGIS\WangDoodletheGIS-cli.exe" engine` → "OK OpenDroneMap … ready"
-   - `"C:\Program Files\WangDoodletheGIS\WangDoodletheGIS-cli.exe" georef tests\data\maps\poblacion_landslide.jpg --lon "124d47'E" --lat "8d52'N" --crs EPSG:3125 --classes mgb_landslide --out C:\temp\georef_test`
+   - `"C:\Program Files\WhangDoodleGIS\WhangDoodleGIS-cli.exe" engine` → "OK OpenDroneMap … ready"
+   - `"C:\Program Files\WhangDoodleGIS\WhangDoodleGIS-cli.exe" georef tests\data\maps\poblacion_landslide.jpg --lon "124d47'E" --lat "8d52'N" --crs EPSG:3125 --classes mgb_landslide --out C:\temp\georef_test`
      → RMSE ≈ 0.4 m (must be < 1 m), files `*_georef.tif` and `*_classes.gpkg`.
-   - Start menu → WangDoodletheGIS opens; Home shows "OpenDroneMap … ready".
+   - Start menu → WhangDoodleGIS opens; Home shows "OpenDroneMap … ready".
 5. **Real engine test** (never done before): `packaging\ci\odm_test.ps1 -Photos 30 -Preset standard`
    (needs the aukerman photos in `C:\data\aukerman\images`). Takes 20-60 min. It must produce
    orthomosaic, DSM, DTM and contours in a job folder whose path contains spaces.
@@ -64,7 +64,7 @@ build script, CI test scripts), `data/us_nga_egm96_15.tif` (EGM96 geoid, already
 - ODM 3.6.2 itself runs its SMRF ground classification with an *unquoted* path (opendm/dem/pdal.py),
   so a job folder with spaces silently gets no ground points and the DTM stage fails ("bad allocation").
   `engine.space_free_alias()` therefore hands ODM a space-free directory junction under
-  `C:\ProgramData\WangDoodletheGIS\odm\` pointing at the job folder (removed after the run).
+  `C:\ProgramData\WhangDoodleGIS\odm\` pointing at the job folder (removed after the run).
 - ODM's win32env.bat restores PATH from `_OLD_VIRTUAL_PATH` (left by an activated Python venv), which
   breaks ODM's DLL loading; `engine.engine_env()` strips such variables for the ODM child process.
 - Frozen app data: pip wheels of rasterio/pyogrio/pyproj each carry their own GDAL/PROJ data; do NOT
@@ -83,14 +83,26 @@ build script, CI test scripts), `data/us_nga_egm96_15.tif` (EGM96 geoid, already
 - `core/landslide.py` neighbour-angle convention (rows = +y) and the D-infinity fall-line limit.
 If a Windows fix seems to need changing these, stop and explain to the owner first.
 
-## Naming (0.2.2)
-- User-facing name is **WangDoodletheGIS**, developed by **Migz** (`APP_NAME`, `AUTHOR`, `DISCLAIMER`
-  in `fieldortho/__init__.py`). The Python package, repo folder and spec file keep the internal
-  name `fieldortho`; do not rename them.
-- The disclaimer appears on the installer's accept page (`LICENSE-NOTICE.txt`), in the sidebar
-  footer / About box, and in every export README. Do not mention DILG in the app (owner's choice).
+## Naming and UI (0.3.0)
+- User-facing name is **WhangDoodleGIS**, developed by **Migz Siao** (`APP_NAME`, `AUTHOR`,
+  `DISCLAIMER_PARAGRAPHS`, `DISCLAIMER_SHORT` in `fieldortho/__init__.py`). Earlier names: FieldOrtho (0.2.1),
+  WangDoodletheGIS (0.2.2); `OLD_APP_NAMES` lets `core/settings.py` copy their settings on first start.
+  The Python package, repo folder and spec file keep the internal name `fieldortho`; do not rename them.
+- The installer keeps WangDoodletheGIS's AppId (upgrade) but installs to the new folder, and silently
+  uninstalls the old WangDoodletheGIS folder and the FieldOrtho 0.2.1 install (different AppId) first.
+- The disclaimer appears on the installer's accept page (`LICENSE-NOTICE.txt`), in the navigation footer /
+  About box, and in every export README. It names MGB, NAMRIA, DOST-PAGASA and DOST-PHIVOLCS as the official
+  institutions (owner's choice). Do not mention DILG in the app (owner's choice).
+- "Support the Developer" shows only `resources/support_qr.png` (InstaPay QR). Never add the owner's name,
+  phone number or account details to it (owner's choice).
+- UI: navy theme (`gui/theme.py`), navigation rail + title bar + status bar (`gui/main_window.py`), logo drawn
+  by `packaging/make_icon.py`. Guided inputs in `gui/inputs.py` (DMS boxes, grid spacing, metres/feet).
+  The Jobs list (`gui/jobs_page.py`) shows drone jobs plus georef sessions and flood/landslide scenarios
+  recorded in `%APPDATA%\WhangDoodleGIS\activity.json` (`core/activity.py`).
 - The installer bundles ODM's OpenPointClass model (`packaging\redist\openpointclass\model.bin`) into
   `%ProgramData%\ODM\storage\models\openpointclass\v1_0_0`, which ODM otherwise downloads mid-run.
+- GUI walkthroughs on Windows need `FIELDORTHO_TEST_PHOTOS=C:\data\aukerman\images` and
+  `FAKE_ODM_ORTHO=C:\data\aukerman\aukerman.png`.
 
 ## Owner
 Rictu (DILG Region 10, Philippines). Non-specialist in packaging: explain results plainly, give

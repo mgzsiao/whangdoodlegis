@@ -1,20 +1,20 @@
-; WangDoodletheGIS Windows installer (Inno Setup 6.1+)
+; WhangDoodleGIS Windows installer (Inno Setup 6.1+)
 ;
 ; Two editions from this one script:
-;   ISCC /DBUNDLE_ENGINE installer.iss       -> WangDoodletheGIS_Setup_<v>_Offline.exe  (engine inside; no internet)
-;   ISCC /DODM_URL=... /DODM_SHA256=... ...  -> WangDoodletheGIS_Setup_<v>_Online.exe   (downloads the engine)
+;   ISCC /DBUNDLE_ENGINE installer.iss       -> WhangDoodleGIS_Setup_<v>_Offline.exe  (engine inside; no internet)
+;   ISCC /DODM_URL=... /DODM_SHA256=... ...  -> WhangDoodleGIS_Setup_<v>_Online.exe   (downloads the engine)
 ;
 ; Expects:
-;   ..\dist\WangDoodletheGIS\      PyInstaller output (app + GIS libraries + EGM96 geoid grid)
+;   ..\dist\WhangDoodleGIS\      PyInstaller output (app + GIS libraries + EGM96 geoid grid)
 ;   redist\ODM_Setup.exe           official OpenDroneMap Windows installer (offline edition)
-; Silent install (IT / scripted):  WangDoodletheGIS_Setup_x.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+; Silent install (IT / scripted):  WhangDoodleGIS_Setup_x.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
-#define MyAppName "WangDoodletheGIS"
+#define MyAppName "WhangDoodleGIS"
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.2"
+  #define MyAppVersion "0.3.0"
 #endif
-#define MyAppExe "WangDoodletheGIS.exe"
-#define MyCliExe "WangDoodletheGIS-cli.exe"
+#define MyAppExe "WhangDoodleGIS.exe"
+#define MyCliExe "WhangDoodleGIS-cli.exe"
 #ifndef ODM_URL
   #define ODM_URL ""
 #endif
@@ -35,12 +35,15 @@ AppId={{3F8A2C61-9D4E-4B7A-A1C5-7E2B9D0F6A38}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
-AppPublisher=Migz
+AppPublisher=Migz Siao
 AppComments=Offline drone mapping, map georeferencing and flood/landslide scenarios
 DefaultDirName={autopf}\{#MyAppName}
+; upgrades from WangDoodletheGIS (same AppId) move to the new folder; the old one is uninstalled below
+UsePreviousAppDir=no
+UsePreviousGroup=no
 DefaultGroupName={#MyAppName}
 OutputDir=..\dist
-OutputBaseFilename=WangDoodletheGIS_Setup_{#MyAppVersion}_{#Edition}
+OutputBaseFilename=WhangDoodleGIS_Setup_{#MyAppVersion}_{#Edition}
 SetupIconFile=..\fieldortho\resources\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2/ultra64
@@ -103,6 +106,12 @@ Filename: "https://qgis.org/download/"; Description: "Open the QGIS download pag
 Type: filesandordirs; Name: "{app}\__pycache__"
 
 [Code]
+const
+  UninstKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\';
+  { this app (also used by WangDoodletheGIS 0.2.2) and the earlier FieldOrtho 0.2.x }
+  ThisAppId = '{3F8A2C61-9D4E-4B7A-A1C5-7E2B9D0F6A38}_is1';
+  FieldOrthoId = '{6B0D3E1A-5F3C-4C7B-9C2E-5F1D2A7E9B41}_is1';
+
 var
   DownloadPage: TDownloadWizardPage;
   EngineDownloaded: Boolean;
@@ -180,6 +189,31 @@ begin
   { silent installs never click Next: download here instead (failure is not fatal) }
   if WizardSilent() then
     DownloadEngine(True);
+end;
+
+{ Silently remove an earlier version installed under an older name or folder. Jobs, settings and
+  the OpenDroneMap engine are kept (the uninstallers only remove program files and shortcuts). }
+procedure RemoveOldVersion(const Id: String; const OnlyIfOtherFolder: Boolean);
+var
+  Cmd, Loc: String;
+  Code: Integer;
+begin
+  if not RegQueryStringValue(HKLM, UninstKey + Id, 'UninstallString', Cmd) then Exit;
+  if OnlyIfOtherFolder and RegQueryStringValue(HKLM, UninstKey + Id, 'InstallLocation', Loc) then
+    if CompareText(RemoveBackslashUnlessRoot(Loc), RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) = 0 then Exit;
+  Cmd := RemoveQuotes(Cmd);
+  if FileExists(Cmd) then begin
+    WizardForm.StatusLabel.Caption := 'Removing the previous version...';
+    Exec(Cmd, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then begin
+    RemoveOldVersion(FieldOrthoId, False);
+    RemoveOldVersion(ThisAppId, True);
+  end;
 end;
 
 function InitializeSetup(): Boolean;

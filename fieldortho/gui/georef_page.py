@@ -14,11 +14,12 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
                                QMessageBox, QProgressBar, QPushButton, QScrollArea, QSplitter, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from ..core import crs as crsmod, georef as G, mapclasses as M, system
+from ..core import activity, crs as crsmod, georef as G, mapclasses as M, system
 from ..core.georef_export import GeorefExport, export as georef_export
 from . import theme
-from .canvas import MapCanvas, qimage_from
+from .canvas import MapCanvas, map_card, qimage_from
 from .export_widgets import CrsPicker, FolderPicker, FormatChecks
+from .inputs import CoordDialog, DmsEdit, IntervalEdit
 from .pages_setup import Page, clear_layout
 from .widgets import IssueBox, card, label
 from .workers import Task
@@ -33,41 +34,44 @@ class ClickLabel(QLabel):
 
 class GeorefPage(Page):
     home = Signal()
+    CRUMB = "Tools"
+    TITLE = "Georeference a map"
 
     def __init__(self, session):
         super().__init__(session)
-        self.root.setContentsMargins(20, 14, 20, 12)
-        top = QHBoxLayout()
-        top.addWidget(label("Georeference a map", "H1"))
-        top.addStretch(1)
-        for text, fn in (("\U0001F4C2  Open map image…", self.open_image), ("Save session", self.save_session),
-                         ("Load session…", self.load_session), ("⌂  Home", lambda: self.home.emit())):
+        acts = []
+        for text, fn, primary in (("Save session", lambda: self.save_session(), False),
+                                  ("Load session\u2026", lambda: self.load_session(), False),
+                                  ("Open map image\u2026", lambda: self.open_image(), True)):
             b = QPushButton(text)
-            if text.startswith("\U0001F4C2"):
+            if primary:
                 b.setObjectName("Primary")
             b.clicked.connect(fn)
-            top.addWidget(b)
-        self.root.addLayout(top)
+            acts.append(b)
+        self.set_actions(acts)
 
         split = QSplitter()
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
+        ll.setSpacing(6)
         self.canvas = MapCanvas()
         self.canvas.clicked.connect(self._canvas_click)
         self.canvas.moved.connect(self._canvas_move)
-        ll.addWidget(self.canvas, 1)
+        self.file_info = label("No map open", "Muted")
+        ll.addWidget(map_card(self.canvas, [self.file_info]), 1)
         self.readout = label("Open a scanned or exported map with a coordinate grid (JPG, PNG, TIF).", "Muted")
         ll.addWidget(self.readout)
         split.addWidget(left)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._grid_tab(), "1  Grid")
-        self.tabs.addTab(self._points_tab(), "2  Control points")
-        self.tabs.addTab(self._export_tab(), "3  Export")
-        self.tabs.setMinimumWidth(470)
+        self.tabs.addTab(self._grid_tab(), "\u2460  Grid")
+        self.tabs.addTab(self._points_tab(), "\u2461  Control points")
+        self.tabs.addTab(self._export_tab(), "\u2462  Export")
+        self.tabs.setMinimumWidth(500)
         split.addWidget(self.tabs)
-        split.setSizes([900, 480])
+        split.setStretchFactor(0, 1)
+        split.setSizes([860, 520])
         self.root.addWidget(split, 1)
 
         self.image_path = ""
@@ -82,47 +86,53 @@ class GeorefPage(Page):
     def _grid_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 12, 14, 12)
+        lay.setSpacing(8)
         self.det_box = QVBoxLayout()
         lay.addLayout(self.det_box)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Grid labels are in"))
+        lay.addWidget(IssueBox("info", "Type the numbers only \u2013 no \u00b0 symbol needed",
+                               "Read each grid label from its small picture and type the degrees, minutes and "
+                               "seconds into the boxes. Space or Tab jumps to the next box; choose E/W or N/S "
+                               "from the list. Click a picture to zoom the map to that label."))
+        lay.addWidget(label("MAP DATUM (PRINTED ON THE MAP)", "Section"))
         self.grid_crs = QComboBox()
         for code, text in crsmod.GRID_CHOICES:
             self.grid_crs.addItem(text, code)
         self.grid_crs.setToolTip("Check the map's datum note (e.g. 'Datum: Luzon 1911'). PRS92 maps say PRS92.")
-        row.addWidget(self.grid_crs, 1)
-        lay.addLayout(row)
-        lay.addWidget(label("Read each label from the zoomed picture and type it (e.g. 124°47'0\"E). "
-                            "Or type the first one and the spacing, then “Fill the rest”.", "Muted", wrap=True))
+        lay.addWidget(self.grid_crs)
+        lay.addWidget(label("GRID SPACING", "Section"))
+        self.interval = IntervalEdit(1, 0)
+        self.interval.setToolTip("The difference between two neighbouring grid labels, e.g. 1 minute.")
+        lay.addWidget(self.interval)
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         holder = QWidget()
         holder.setObjectName("Page")
+        holder.setStyleSheet("QWidget#Page { background: white; }")
         self.labels_lay = QVBoxLayout(holder)
-        self.labels_lay.setContentsMargins(0, 0, 4, 0)
+        self.labels_lay.setContentsMargins(0, 4, 4, 0)
+        self.labels_lay.setSpacing(6)
         sc.setWidget(holder)
         lay.addWidget(sc, 1)
         frow = QHBoxLayout()
-        frow.addWidget(QLabel("Spacing"))
-        self.interval = QLineEdit("1'")
-        self.interval.setMaximumWidth(80)
-        self.interval.setToolTip("Grid interval, e.g. 1' (one minute), 30\", 0.5°")
-        frow.addWidget(self.interval)
-        fill = QPushButton("Fill the rest")
+        fill = QPushButton("Fill the rest from spacing")
+        fill.setToolTip("Type the first longitude and the first latitude, then fill the other lines.")
         fill.clicked.connect(self._fill_series)
         frow.addWidget(fill)
         frow.addStretch(1)
-        self.make_btn = QPushButton("Create control points ▶")
+        self.make_btn = QPushButton("Next: create control points  \u2192")
         self.make_btn.setObjectName("Primary")
         self.make_btn.clicked.connect(self._make_points)
         frow.addWidget(self.make_btn)
         lay.addLayout(frow)
-        self.value_edits: list[tuple[G.GridLine, QLineEdit]] = []
+        self.value_edits: list[tuple[G.GridLine, DmsEdit]] = []
+        self._row_msgs: dict[int, tuple[QLabel, QLabel]] = {}
         return w
 
     def _points_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 12, 14, 12)
         row = QHBoxLayout()
         row.addWidget(QLabel("Method"))
         self.order = QComboBox()
@@ -145,7 +155,8 @@ class GeorefPage(Page):
         self.table.cellDoubleClicked.connect(self._zoom_point)
         lay.addWidget(self.table, 1)
         r2 = QHBoxLayout()
-        self.add_btn = QPushButton("＋ Add point")
+        self.add_btn = QPushButton("\uFF0B  Add point by clicking")
+        self.add_btn.setToolTip("Click on the map where you know the coordinates; a window asks for them.")
         self.add_btn.setCheckable(True)
         self.add_btn.toggled.connect(self._toggle_add)
         r2.addWidget(self.add_btn)
@@ -166,6 +177,7 @@ class GeorefPage(Page):
         inner = QWidget()
         inner.setObjectName("Page")
         lay = QVBoxLayout(inner)
+        lay.setContentsMargins(14, 12, 14, 12)
         lay.addWidget(label("Coordinate system of the output", "H2"))
         self.out_crs = CrsPicker(default="EPSG:4326")
         lay.addWidget(self.out_crs)
@@ -235,8 +247,8 @@ class GeorefPage(Page):
         self.rgb = G.load_rgb(path)
         self.canvas.set_base(self.rgb)
         self.gcps, self.fit, self.det = [], None, None
-        self.readout.setText(f"{os.path.basename(path)} – {self.rgb.shape[1]} × {self.rgb.shape[0]} px. "
-                             "Looking for the map frame and grid…")
+        self.file_info.setText(f"{os.path.basename(path)} \u00b7 {self.rgb.shape[1]} \u00d7 {self.rgb.shape[0]} px")
+        self.readout.setText("Looking for the map frame and grid\u2026")
         name = os.path.splitext(os.path.basename(path))[0]
         self.out_dir.edit.setText(os.path.join(os.path.dirname(path), name + "_georeferenced"))
         self._name = name
@@ -272,86 +284,113 @@ class GeorefPage(Page):
     def _fill_label_rows(self):
         clear_layout(self.labels_lay)
         self.value_edits = []
+        self._row_msgs = {}
         if not self.det:
             self.labels_lay.addStretch(1)
             return
-        for title, lines, is_lat in (("Vertical lines (longitude), left → right", self.det.meridians, False),
-                                     ("Horizontal lines (latitude), top → bottom", self.det.parallels, True)):
-            self.labels_lay.addWidget(label(title, "H2"))
-            for i, ln in enumerate(lines):
+        for title, lines, is_lat in (("LONGITUDE \u2013 VERTICAL GRID LINES, LEFT \u2192 RIGHT", self.det.meridians, False),
+                                     ("LATITUDE \u2013 HORIZONTAL GRID LINES, TOP \u2192 BOTTOM", self.det.parallels, True)):
+            self.labels_lay.addSpacing(4)
+            self.labels_lay.addWidget(label(title, "Section"))
+            for ln in lines:
                 row = QHBoxLayout()
+                row.setSpacing(8)
                 x0, y0, x1, y1 = G.label_box(self.det, ln)
                 crop = self.rgb[y0:y1, x0:x1]
                 pic = ClickLabel()
                 if crop.size:
                     pm = QPixmap.fromImage(qimage_from(np.ascontiguousarray(crop)))
-                    pic.setPixmap(pm.scaled(236, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                pic.setFixedSize(240, 100)
+                    pic.setPixmap(pm.scaled(146, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                pic.setFixedSize(150, 62)
                 pic.setAlignment(Qt.AlignCenter)
                 pic.setToolTip("Click to zoom the map to this label")
                 pic.clicked.connect(lambda cx=(x0 + x1) / 2, cy=(y0 + y1) / 2: self.canvas.zoom_to(cx, cy, 5))
                 pic.setCursor(Qt.PointingHandCursor)
-                pic.setStyleSheet(f"border: 1px solid {theme.LINE}; background: white;")
+                pic.setStyleSheet(f"border: 1px solid {theme.LINE}; border-radius: 4px; background: white;")
                 row.addWidget(pic)
-                ed = QLineEdit("" if ln.value is None else G.format_dms(ln.value, is_lat))
-                ed.setPlaceholderText("8°52'0\"N" if is_lat else "124°47'0\"E")
-                ed.setMinimumWidth(130)
-                ed.editingFinished.connect(self._check_values)
-                row.addWidget(ed, 1)
+                col = QVBoxLayout()
+                col.setSpacing(2)
+                ed = DmsEdit(is_lat)
+                if ln.value is not None:
+                    ed.set_value(ln.value)
+                ed.changed.connect(self._check_values)
+                er = QHBoxLayout()
+                er.addWidget(ed)
+                mark = QLabel("")
+                mark.setFixedWidth(18)
+                er.addWidget(mark)
+                er.addStretch(1)
+                col.addLayout(er)
+                msg = label("", "Error", wrap=True)
+                msg.setVisible(False)
+                col.addWidget(msg)
+                row.addLayout(col, 1)
                 self.labels_lay.addLayout(row)
                 self.value_edits.append((ln, ed))
+                self._row_msgs[id(ed)] = (mark, msg)
         self.labels_lay.addStretch(1)
 
     def _fill_series(self):
-        try:
-            step = G.parse_interval(self.interval.text())
-        except ValueError as e:
-            QMessageBox.warning(self, "Spacing", str(e))
+        step = self.interval.degrees()
+        if step is None:
+            QMessageBox.warning(self, "Grid spacing", "Type the grid spacing first, e.g. 1 minute.")
             return
+        done = False
         for kind, sign in (("meridian", 1), ("parallel", -1)):    # latitude decreases downwards
             rows = [(ln, ed) for ln, ed in self.value_edits if ln.kind == kind]
-            first = next(((i, ed) for i, (ln, ed) in enumerate(rows) if ed.text().strip()), None)
+            first = next(((i, ed) for i, (ln, ed) in enumerate(rows) if ed.value() is not None), None)
             if not first:
                 continue
             i0, ed0 = first
-            try:
-                v0 = G.parse_angle(ed0.text())
-            except ValueError as e:
-                QMessageBox.warning(self, "Value", str(e))
-                return
+            v0 = ed0.value()
             for i, (ln, ed) in enumerate(rows):
-                v = v0 + sign * (i - i0) * step
-                ed.setText(G.format_dms(v, kind == "parallel"))
+                if i != i0:
+                    ed.set_value(v0 + sign * (i - i0) * step, auto=True)
+            done = True
+        if not done:
+            QMessageBox.information(self, "Fill the rest", "Type the first longitude and the first latitude, "
+                                                           "then press this button again.")
         self._check_values()
 
     def _check_values(self) -> bool:
         ok = True
         for ln, ed in self.value_edits:
-            t = ed.text().strip()
-            if not t:
-                ln.value = None
-                ed.setStyleSheet("")
+            lvl, msg, v = ed.check()
+            ln.value = v if lvl in ("", "warn") else None
+            mark, lab = self._row_msgs.get(id(ed), (None, None))
+            if mark is None:
                 continue
-            try:
-                ln.value = G.parse_angle(t)
-                ed.setStyleSheet("")
-            except ValueError:
-                ln.value = None
-                ed.setStyleSheet(f"border: 2px solid {theme.ERROR};")
+            if lvl == "error":
                 ok = False
+            auto = (ed.deg.property("state") or "") == "auto"
+            mark.setText({"": "\u2714", "warn": "\u26A0", "error": "\u2716", "empty": ""}[lvl])
+            mark.setStyleSheet(f"color: {dict(error=theme.ERROR, warn=theme.WARN).get(lvl, theme.OK)}; "
+                               "font-size: 14px;")
+            mark.setToolTip("filled in from the spacing" if auto else "")
+            lab.setObjectName("Error" if lvl == "error" else "Warn")
+            theme.repolish(lab)
+            lab.setText(msg)
+            lab.setVisible(bool(msg))
         # consistency: equal spacing in pixels must mean equal spacing in degrees
         for kind in ("meridian", "parallel"):
-            ls_ = [ln for ln, _ in self.value_edits if ln.kind == kind and ln.value is not None]
-            if len(ls_) >= 3:
-                pos = np.array([l.pos for l in ls_])
-                val = np.array([l.value for l in ls_])
+            pairs = [(ln, ed) for ln, ed in self.value_edits if ln.kind == kind and ln.value is not None]
+            if len(pairs) >= 3:
+                pos = np.array([ln.pos for ln, _ in pairs])
+                val = np.array([ln.value for ln, _ in pairs])
                 a, b = np.polyfit(pos, val, 1)
-                if np.abs(val - (a * pos + b)).max() > 0.2 * abs(a) * np.diff(np.sort(pos)).min():
+                resid = np.abs(val - (a * pos + b))
+                if resid.max() > 0.2 * abs(a) * np.diff(np.sort(pos)).min():
                     ok = False
-                    for ln, ed in self.value_edits:
-                        if ln in ls_:
-                            ed.setStyleSheet(f"border: 2px solid {theme.WARN};")
-                    self.readout.setText("⚠ The values are not evenly spaced – check for a typo.")
+                    ln, ed = pairs[int(resid.argmax())]
+                    mark, lab = self._row_msgs[id(ed)]
+                    mark.setText("\u26A0")
+                    mark.setStyleSheet(f"color: {theme.WARN}; font-size: 14px;")
+                    lab.setObjectName("Warn")
+                    theme.repolish(lab)
+                    lab.setText("This value does not fit the even spacing of the other lines \u2013 check for a "
+                                "typo.")
+                    lab.setVisible(True)
+                    self.readout.setText("\u26A0 The values are not evenly spaced \u2013 check for a typo.")
         return ok
 
     def _make_points(self):
@@ -359,14 +398,16 @@ class GeorefPage(Page):
             QMessageBox.information(self, "No grid", "No grid was detected; add control points by clicking.")
             return
         if not self._check_values():
-            if QMessageBox.question(self, "Check the values", "Some values look wrong (red/orange). Continue anyway?") \
+            if QMessageBox.question(self, "Check the values",
+                                    "Some values look wrong (marked red or orange). Continue anyway?") \
                     != QMessageBox.Yes:
                 return
         manual = [g for g in self.gcps if g.source == "manual"]
         self.gcps = G.make_gcps(self.det) + manual
         if len(self.gcps) < 3:
             QMessageBox.information(self, "Not enough values",
-                                    "Type at least 2 longitude and 2 latitude values (or use Fill the rest).")
+                                    "Type at least 2 longitude and 2 latitude values (or type the first of each "
+                                    "and press \u201cFill the rest from spacing\u201d).")
             return
         self.tabs.setCurrentIndex(1)
         self._refit()
@@ -452,18 +493,14 @@ class GeorefPage(Page):
     def _canvas_click(self, x, y):
         if not self.adding or self.rgb is None:
             return
-        geo = crsmod.is_geographic(self._grid_code())
-        fmt = "longitude, latitude  e.g.  124°48'0\"E, 8°51'0\"N" if geo else "X, Y  e.g.  699500, 980250"
-        text, ok = QInputDialog.getText(self, "Coordinates of this point", f"Point at pixel {x:.1f}, {y:.1f}\n{fmt}")
-        if not ok or not text.strip():
+        code = self._grid_code()
+        d = CoordDialog(crsmod.is_geographic(code), crsmod.label(code), x, y, self)
+        if not d.exec():
             return
-        try:
-            a, b = [t.strip() for t in text.replace(";", ",").split(",")[:2]]
-            gx = G.parse_angle(a) if geo else float(a)
-            gy = G.parse_angle(b) if geo else float(b)
-        except Exception:
-            QMessageBox.warning(self, "Coordinates", "Type two values separated by a comma.")
+        vals = d.values()
+        if vals is None:
             return
+        gx, gy = vals
         self.gcps.append(G.GCP(x, y, gx, gy, True, "manual", f"P{len(self.gcps) + 1}"))
         self._refit()
 
@@ -561,31 +598,54 @@ class GeorefPage(Page):
     def _exported(self, result, folder):
         files, info = result
         self.exp_btn.setEnabled(True)
-        txt = f"✔ {len(files)} files written. Error {info['rmse_m']:.2f} m."
+        txt = f"\u2714 {len(files)} files written. Error {info['rmse_m']:.2f} m."
         if info.get("class_areas_ha"):
             txt += " Class areas (ha): " + ", ".join(f"{k}: {v:,.1f}" for k, v in info["class_areas_ha"].items())
         self.exp_status.setText(txt)
+        # keep a session next to the outputs so the job can be reopened from the Jobs list
+        try:
+            sp = os.path.join(folder, f"{getattr(self, '_name', 'map')}.georef-session.json")
+            self._write_session(sp, f"\u2714 Exported \u00b7 error {info['rmse_m']:.2f} m", folder)
+        except OSError:
+            pass
         if QMessageBox.question(self, "Export finished", f"{len(files)} files written.\n\nOpen the folder?") \
                 == QMessageBox.Yes:
             system.open_path(folder)
 
     # ================================================================ sessions
-    def save_session(self):
+    def save_session(self, path: str | None = None):
         if not self.image_path:
+            QMessageBox.information(self, "Nothing to save", "Open a map image first.")
             return
-        p, _ = QFileDialog.getSaveFileName(self, "Save georeferencing session",
-                                           os.path.splitext(self.image_path)[0] + ".fieldortho-georef.json",
-                                           "Session (*.json)")
+        p = path
+        if not p:
+            p, _ = QFileDialog.getSaveFileName(self, "Save georeferencing session",
+                                               os.path.splitext(self.image_path)[0] + ".georef-session.json",
+                                               "Session (*.json)")
         if p:
-            G.save_session(p, self.image_path, self.det, self.gcps, self._grid_code(),
-                           {"order": self.order.currentData()})
+            status = (f"Saved \u00b7 error {self.fit.rmse_m:.2f} m" if self.fit else "Saved \u00b7 not fitted yet")
+            self._write_session(p, status, os.path.dirname(p))
 
-    def load_session(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Load georeferencing session", os.path.expanduser("~"),
-                                           "Session (*.json)")
+    def _write_session(self, path: str, status: str, folder: str):
+        G.save_session(path, self.image_path, self.det, self.gcps, self._grid_code(),
+                       {"order": self.order.currentData(), "out_crs": self.out_crs.code() or ""})
+        h, w = self.rgb.shape[:2]
+        activity.record(activity.Activity(
+            kind="georef", name=getattr(self, "_name", os.path.basename(path)), path=path, folder=folder,
+            size=f"{w} \u00d7 {h} px", crs=crsmod.label(self._grid_code()), status=status))
+
+    def load_session(self, path: str | None = None):
+        p = path
+        if not p:
+            p, _ = QFileDialog.getOpenFileName(self, "Load georeferencing session", os.path.expanduser("~"),
+                                               "Session (*.json)")
         if not p:
             return
-        img, det, gcps, gcrs, extra = G.load_session(p)
+        try:
+            img, det, gcps, gcrs, extra = G.load_session(p)
+        except Exception as e:
+            QMessageBox.warning(self, "Cannot open session", f"{os.path.basename(p)}: {e}")
+            return
         if not os.path.exists(img):
             QMessageBox.warning(self, "Image missing", f"The map image is no longer at:\n{img}")
             return
@@ -593,6 +653,9 @@ class GeorefPage(Page):
         self.rgb = G.load_rgb(img)
         self.canvas.set_base(self.rgb)
         self._name = os.path.splitext(os.path.basename(img))[0]
+        self.file_info.setText(f"{os.path.basename(img)} \u00b7 {self.rgb.shape[1]} \u00d7 {self.rgb.shape[0]} px")
+        if extra.get("out_crs"):
+            self.out_crs.set_code(extra["out_crs"])
         self.grid_crs.setCurrentIndex(max(0, self.grid_crs.findData(gcrs)))
         self.order.setCurrentIndex(max(0, self.order.findData(extra.get("order", 1))))
         self.det = det

@@ -33,8 +33,8 @@ class StatCard(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 10, 14, 10)
         lay.setSpacing(2)
-        self.t = label(title, "Muted")
-        self.v = label(value, "H2")
+        self.t = label(title.upper(), "Section")
+        self.v = label(value, "Value")
         self.s = label(sub, "Muted", wrap=True)
         lay.addWidget(self.t)
         lay.addWidget(self.v)
@@ -119,7 +119,7 @@ class PhotoMap(QWidget):
         if self.footprint_r > 0:
             r = self.footprint_r * scale
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(31, 111, 92, 18))
+            p.setBrush(QColor(*theme.ACCENT_RGB, 18))
             for x, y, st in self.points:
                 if st != "excluded":
                     p.drawEllipse(to_px(x, y), r, r)
@@ -128,7 +128,7 @@ class PhotoMap(QWidget):
         for i, (x, y, _s) in enumerate(self.points):
             (path.moveTo if i == 0 else path.lineTo)(to_px(x, y))
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(QColor(31, 111, 92, 90), 1.2))
+        p.setPen(QPen(QColor(*theme.ACCENT_RGB, 90), 1.2))
         p.drawPath(path)
         colors = {"ok": QColor(theme.ACCENT), "blurry": QColor(theme.WARN), "excluded": QColor("#B9C2BE")}
         for x, y, st in self.points:
@@ -257,3 +257,22 @@ class RasterView(QGraphicsView):
 def numpy_to_qimage(rgba) -> QImage:
     h, w = rgba.shape[:2]
     return QImage(rgba.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
+
+
+def action_bar(widgets) -> QWidget:
+    """A row of buttons for the window's title bar."""
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(8)
+    for x in widgets:
+        h.addWidget(x)
+    return w
+
+
+def icon_label(key: str, size: int = 16, color: str | None = None) -> QLabel:
+    """A glyph from the Windows icon font (Segoe Fluent Icons / MDL2)."""
+    lab = QLabel(theme.ICONS.get(key, key))
+    lab.setStyleSheet(f"font-family: {theme.ICON_FONT}; font-size: {size}px; color: {color or theme.MUTED};"
+                      "background: transparent;")
+    return lab

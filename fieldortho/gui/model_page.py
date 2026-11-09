@@ -1,6 +1,7 @@
 """Flood and landslide scenario modelling on a terrain model."""
 from __future__ import annotations
 
+import json
 import math
 import os
 
@@ -10,11 +11,12 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QHBoxLayout, QLabel, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider,
                                QSplitter, QTabWidget, QVBoxLayout, QWidget, QButtonGroup)
 
-from ..core import exporters as ex, flood, jobs, landslide as ls, mapclasses, system
+from ..core import activity, crs as crsmod, exporters as ex, flood, jobs, landslide as ls, mapclasses, system
 from ..core.model_export import background_for, export_flood, export_landslide, slope_rgb
 from ..core.terrain import load_dem, lonlat as dem_lonlat
 from . import theme
-from .canvas import MapCanvas
+from .canvas import MapCanvas, map_card
+from .inputs import set_state
 from .export_dialog import SimpleExportDialog
 from .pages_setup import Page, clear_layout
 from .widgets import IssueBox, StatCard, label
@@ -41,59 +43,52 @@ def legend_row(color, text):
 
 class ModelPage(Page):
     home = Signal()
+    CRUMB = "Tools"
+    TITLE = "Flood & landslide"
 
     def __init__(self, session):
         super().__init__(session)
-        self.root.setContentsMargins(20, 14, 20, 12)
-        top = QHBoxLayout()
-        top.addWidget(label("Flood & landslide modelling", "H1"))
-        top.addStretch(1)
-        top.addWidget(QLabel("Terrain:"))
         self.source = QComboBox()
         self.source.setMinimumWidth(320)
-        top.addWidget(self.source)
-        ob = QPushButton("Open elevation file…")
+        self.source.setToolTip("The terrain model (DTM, bare ground) to run the scenarios on.")
+        ob = QPushButton("Open elevation file\u2026")
+        ob.setObjectName("Primary")
         ob.clicked.connect(self._open_file)
-        top.addWidget(ob)
-        hb = QPushButton("⌂  Home")
-        hb.clicked.connect(self.home.emit)
-        top.addWidget(hb)
-        self.root.addLayout(top)
+        self.set_actions([QLabel("Terrain"), self.source, ob])
 
         split = QSplitter()
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        vrow = QHBoxLayout()
-        vrow.addWidget(QLabel("Background:"))
+        ll.setSpacing(6)
+        extra = [QLabel("Background:")]
         self.bg_group = QButtonGroup(self)
         for i, t in enumerate(("Photo / relief", "Shaded relief", "Slope steepness")):
             rb = QRadioButton(t)
             rb.setChecked(i == 0)
             self.bg_group.addButton(rb, i)
-            vrow.addWidget(rb)
+            extra.append(rb)
         self.bg_group.idClicked.connect(lambda _i: self._show_background())
         self.cont_cb = QCheckBox("Contours")
         self.cont_cb.setChecked(True)
         self.cont_cb.toggled.connect(lambda _v: self._draw_vectors())
-        vrow.addWidget(self.cont_cb)
-        vrow.addStretch(1)
-        ll.addLayout(vrow)
+        extra += [12, self.cont_cb]
         self.canvas = MapCanvas()
         self.canvas.clicked.connect(self._click)
         self.canvas.double_clicked.connect(self._dclick)
         self.canvas.moved.connect(self._move)
-        ll.addWidget(self.canvas, 1)
+        ll.addWidget(map_card(self.canvas, extra), 1)
         self.readout = label("Choose a terrain model (DTM) above.", "Muted")
         ll.addWidget(self.readout)
         split.addWidget(left)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._flood_tab(), "\U0001F30A  Flood")
-        self.tabs.addTab(self._slide_tab(), "⛰  Landslide")
+        self.tabs.addTab(self._flood_tab(), "Flood")
+        self.tabs.addTab(self._slide_tab(), "Landslide")
         self.tabs.currentChanged.connect(self._tab_changed)
-        self.tabs.setMinimumWidth(430)
+        self.tabs.setMinimumWidth(450)
         split.addWidget(self.tabs)
-        split.setSizes([900, 440])
+        split.setStretchFactor(0, 1)
+        split.setSizes([880, 470])
         self.root.addWidget(split, 1)
 
         self.dem = None
@@ -116,11 +111,17 @@ class ModelPage(Page):
         self.source.currentIndexChanged.connect(self._source_changed)
         self._fmode_changed(0)
         self._name = "model"
+        self._rise_ft_text(0.0)
 
     # ================================================================ tabs
     def _flood_tab(self):
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
         w = QWidget()
+        w.setObjectName("Page")
+        w.setStyleSheet("QWidget#Page { background: white; }")
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 12, 14, 12)
         mrow = QHBoxLayout()
         mrow.addWidget(QLabel("Type"))
         self.fmode = QComboBox()
@@ -148,16 +149,24 @@ class ModelPage(Page):
         self.slider.valueChanged.connect(self._slider_moved)
         lay.addWidget(self.slider)
         srow = QHBoxLayout()
-        srow.addWidget(QLabel("Water rise:"))
+        self.rise_label = QLabel("Water rise above the riverbed")
+        srow.addWidget(self.rise_label)
         self.rise = QDoubleSpinBox()
         self.rise.setRange(0, 200)
         self.rise.setDecimals(2)
         self.rise.setSingleStep(0.1)
         self.rise.setSuffix(" m")
+        self.rise.setFixedWidth(120)
+        self.rise.setToolTip("In metres (1 m = 3.28 ft). Use the slider or type a value.")
         self.rise.valueChanged.connect(self._rise_changed)
+        self.rise.valueChanged.connect(self._rise_ft_text)
         srow.addWidget(self.rise)
+        self.rise_ft = label("", "Hint")
+        srow.addWidget(self.rise_ft)
         srow.addStretch(1)
         lay.addLayout(srow)
+        self.rise_hint = label("", "Hint", wrap=True)
+        lay.addWidget(self.rise_hint)
         self.level_label = label("", "Muted", wrap=True)
         lay.addWidget(self.level_label)
         g = QGridLayout()
@@ -181,18 +190,21 @@ class ModelPage(Page):
                             "length (HAND method); still-water mode uses one flat level (sea, lake). Neither "
                             "simulates flow speed, rainfall or timing. Use the terrain model (DTM).", "Muted",
                             wrap=True))
-        eb = QPushButton("Export flood scenario…")
+        eb = QPushButton("Export flood scenario\u2026")
         eb.setObjectName("Primary")
         eb.clicked.connect(self._export_flood)
         lay.addWidget(eb)
-        return w
+        sc.setWidget(w)
+        return sc
 
     def _slide_tab(self):
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         w = QWidget()
         w.setObjectName("Page")
+        w.setStyleSheet("QWidget#Page { background: white; }")
         lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 12, 14, 12)
         lay.addWidget(label("1. Draw the slope to test: tick “Slope steepness” or contours to find steep "
                             "ground (contours close together), then click around the area; double-click to finish.",
                             "", wrap=True))
@@ -210,20 +222,39 @@ class ModelPage(Page):
         lay.addWidget(self.sel_label)
         lay.addWidget(label("2. Ground and rain conditions", "H2"))
         f = QFormLayout()
+        f.setVerticalSpacing(10)
+        f.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.soil = QComboBox()
         for k in ls.SOILS:
             self.soil.addItem(k)
         self.soil.setCurrentIndex(1)
+        self.soil.setToolTip("Fills in typical values below; you can change them.")
         self.soil.currentIndexChanged.connect(self._soil_changed)
         f.addRow("Soil type", self.soil)
         self.depth = self._spin(0.3, 20, 2.0, " m", 1)
-        f.addRow("Soil depth", self.depth)
         self.coh = self._spin(0, 100, 8, " kPa", 1)
-        f.addRow("Cohesion c'", self.coh)
-        self.phi = self._spin(5, 50, 28, "°", 1)
-        f.addRow("Friction angle φ'", self.phi)
-        self.gam = self._spin(12, 25, 18, " kN/m³", 1)
-        f.addRow("Unit weight γ", self.gam)
+        self.phi = self._spin(5, 50, 28, " \u00b0", 1)
+        self.gam = self._spin(12, 25, 18, " kN/m\u00b3", 1)
+        self._param_hints = {}
+        for spin, name, unit_text, typical in (
+                (self.depth, "Soil depth", "Depth to the slip surface, in metres. Usually 1\u20135 m.", (0.5, 6)),
+                (self.coh, "Cohesion c\u2032", "Soil 'stickiness' in kilopascals (kPa). Usually 0\u201325 kPa; "
+                 "sand ~0\u20135, clay ~10\u201325.", (0, 30)),
+                (self.phi, "Friction angle \u03c6\u2032", "Internal friction in degrees. Usually 20\u201340\u00b0.",
+                 (18, 42)),
+                (self.gam, "Unit weight \u03b3", "Weight of the moist soil in kilonewtons per cubic metre. "
+                 "Usually 16\u201321 kN/m\u00b3.", (15, 22))):
+            cell = QWidget()
+            cv = QVBoxLayout(cell)
+            cv.setContentsMargins(0, 0, 0, 0)
+            cv.setSpacing(2)
+            spin.setFixedWidth(150)
+            cv.addWidget(spin)
+            h = label(unit_text, "Hint", wrap=True)
+            cv.addWidget(h)
+            f.addRow(name, cell)
+            self._param_hints[spin] = (h, unit_text, typical)
+            spin.valueChanged.connect(lambda _v, sp=spin: self._check_param(sp))
         lay.addLayout(f)
         self.wet = QSlider(Qt.Horizontal)
         self.wet.setRange(0, 100)
@@ -270,6 +301,9 @@ class ModelPage(Page):
         self._trav_text(22)
         return sc
 
+    def _rise_ft_text(self, v):
+        self.rise_ft.setText(f"= {v * 3.2808:.1f} ft")
+
     def _spin(self, lo, hi, v, suffix, dec):
         s = QDoubleSpinBox()
         s.setRange(lo, hi)
@@ -278,6 +312,15 @@ class ModelPage(Page):
         s.setSuffix(suffix)
         s.setMinimumWidth(130)
         return s
+
+    def _check_param(self, spin):
+        h, text, (lo, hi) = self._param_hints[spin]
+        v = spin.value()
+        unusual = v < lo or v > hi
+        set_state(spin, "warn" if unusual else "")
+        h.setObjectName("Warn" if unusual else "Hint")
+        theme.repolish(h)
+        h.setText(("\u26A0 Unusual value. " if unusual else "") + text)
 
     def _soil_changed(self, _i):
         c, phi, g = ls.SOILS[self.soil.currentText()]
@@ -537,6 +580,12 @@ class ModelPage(Page):
 
     def _fmode_changed(self, _i):
         river = self.fmode.currentData() == "river"
+        self.rise_label.setText("Water rise above the riverbed" if river else "Water level above the source")
+        self.rise_hint.setText(
+            "In metres: how high the river stands above its normal bed, along its whole length. "
+            "Typical flood heights are 0.5\u20135 m." if river else
+            "In metres, above the ground level where you clicked (or above the lowest ground if spreading "
+            "from the map edge). For storm surge use the surge height.")
         self.connect.setVisible(not river)
         self.connect_label.setVisible(not river)
         if river and self.seed is not None and self.river is None:
@@ -629,6 +678,9 @@ class ModelPage(Page):
             except Exception as e:
                 QMessageBox.warning(self, "Export failed", str(e))
                 return
+            a = self.flood_res.stats.get("area_ha", 0)
+            self._save_scenario("flood", d.folder.path(), name, d.crs.code(),
+                                f"\u2714 Exported \u00b7 {self.rise.value():.1f} m, {a:,.1f} ha")
             self._done(files, d.folder.path())
 
     # ================================================================ landslide
@@ -697,6 +749,9 @@ class ModelPage(Page):
             except Exception as e:
                 QMessageBox.warning(self, "Export failed", str(e))
                 return
+            a = self.slide_res.stats.get("affected_ha", 0)
+            self._save_scenario("landslide", d.folder.path(), f"{self._name}_landslide", d.crs.code(),
+                                f"\u2714 Exported \u00b7 {a:,.2f} ha affected")
             self._done(files, d.folder.path())
 
     # ================================================================ helpers
@@ -706,6 +761,75 @@ class ModelPage(Page):
         if os.path.basename(base) == "GIS":
             base = os.path.dirname(base)
         return os.path.join(base, "Scenarios", kind)
+
+    def _save_scenario(self, kind, folder, name, crs_code, status):
+        """Write <name>.scenario.json next to the outputs and list it in Jobs."""
+        data = self.source.currentData()
+        if not data or self.dem is None:
+            return
+        t = self.dem.transform
+        sc = {"kind": kind, "dem": data[0], "ortho": data[1], "name": data[2], "tab": self.tabs.currentIndex(),
+              "flood": {"mode": self.fmode.currentData(), "connect": self.connect.currentData(),
+                        "rise": self.rise.value(),
+                        "seed_xy": list(self.dem.rc_to_xy(*self.seed)) if self.seed else None},
+              "landslide": {"soil": self.soil.currentIndex(), "depth": self.depth.value(), "coh": self.coh.value(),
+                            "phi": self.phi.value(), "gam": self.gam.value(), "wet": self.wet.value(),
+                            "trav": self.trav.value(), "force": self.force.isChecked(),
+                            "poly_xy": [[t.c + x * t.a, t.f + y * t.e] for x, y in self.poly]}}
+        path = os.path.join(folder, f"{name}.scenario.json")
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(sc, fh, indent=1)
+        except OSError:
+            return
+        activity.record(activity.Activity(kind=kind, name=name, path=path, folder=folder,
+                                          size=f"Terrain {self.dem.cell:.2f} m cells",
+                                          crs=crsmod.label(crs_code) if crs_code else "", status=status))
+
+    def load_scenario(self, path: str):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                sc = json.load(fh)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Cannot open scenario", f"{os.path.basename(path)}: {e}")
+            return
+        if not os.path.isfile(sc.get("dem", "")):
+            QMessageBox.warning(self, "Terrain missing", f"The terrain model is no longer at:\n{sc.get('dem')}")
+            return
+        data = (sc["dem"], sc.get("ortho"), sc.get("name") or "model")
+        i = self.source.findData(data)
+        if i < 0:
+            self.source.addItem(f"{data[2]} \u2013 {os.path.basename(data[0])}", data)
+            i = self.source.count() - 1
+        if self.source.currentIndex() == i:
+            self._source_changed(i)
+        else:
+            self.source.setCurrentIndex(i)
+        if self.dem is None:
+            return
+        f, s_ = sc.get("flood", {}), sc.get("landslide", {})
+        self.soil.setCurrentIndex(s_.get("soil", self.soil.currentIndex()))
+        for spin, k in ((self.depth, "depth"), (self.coh, "coh"), (self.phi, "phi"), (self.gam, "gam")):
+            if k in s_:
+                spin.setValue(s_[k])
+        self.wet.setValue(int(s_.get("wet", self.wet.value())))
+        self.trav.setValue(int(s_.get("trav", self.trav.value())))
+        self.force.setChecked(bool(s_.get("force", False)))
+        self.fmode.setCurrentIndex(max(0, self.fmode.findData(f.get("mode", "river"))))
+        self.connect.setCurrentIndex(max(0, self.connect.findData(f.get("connect", "seeds"))))
+        t = self.dem.transform
+        if sc.get("kind") == "landslide":
+            self.tabs.setCurrentIndex(1)
+            self.poly = [((x - t.c) / t.a, (y - t.f) / t.e) for x, y in s_.get("poly_xy", [])]
+            self._draw_vectors()
+            if len(self.poly) >= 3:
+                self._run_slide()
+        else:
+            self.tabs.setCurrentIndex(0)
+            self.rise.setValue(float(f.get("rise", 0)))
+            if f.get("seed_xy"):
+                x, y = f["seed_xy"]
+                self._click((x - t.c) / t.a, (y - t.f) / t.e)
 
     def _done(self, files, folder):
         if QMessageBox.question(self, "Export finished", f"{len(files)} files written.\n\nOpen the folder?") \
