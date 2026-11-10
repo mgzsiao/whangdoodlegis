@@ -181,6 +181,11 @@ class MeasurePage(Page):
         self.canvas.moved.connect(self._move)
         ll.addWidget(map_card(self.canvas, extra), 1)
         self.readout = label("Choose a processed drone job above.", "Muted")
+        from .road_widgets import RoadProfileView
+        self.road_profile = RoadProfileView()
+        self.road_profile.setVisible(False)
+        self.road_profile.picked.connect(lambda i: self.plan.select_station(i))
+        ll.addWidget(self.road_profile)
         ll.addWidget(self.readout)
         split.addWidget(left)
         from PySide6.QtWidgets import QStackedWidget
@@ -208,6 +213,8 @@ class MeasurePage(Page):
         self.result = None
         self.result_kind = None
         self.overlay = None
+        self.road_res = None
+        self.road_sel = 0
         self.saved: list[ms.Measurement] = []
         self.task = None
         self.rerun = QTimer(self)
@@ -527,7 +534,9 @@ class MeasurePage(Page):
             return
         kind = self.kind()
         px = [self._px(*p) for p in self.pts]
-        closed = kind in ("area", "volume", "plan") and self.finished
+        closed = kind in ("area", "volume", "plan") and self.finished and not self.road_line_kind()
+        if self.road_res is not None and self.mode == "plan":
+            self._draw_road()
         fill = (245, 184, 65, 45) if closed and self.overlay is None else None
         if len(px) >= 2:
             self.canvas.add_polyline(px, SHAPE, 2.6, closed=closed, fill=fill)
@@ -573,10 +582,52 @@ class MeasurePage(Page):
         self._draw()
 
     def clear_overlay(self):
-        if self.overlay is not None:
-            self.overlay = None
+        changed = self.overlay is not None or self.road_res is not None
+        self.overlay = None
+        self.road_res = None
+        self.road_profile.setVisible(False)
+        if changed:
             self.canvas.set_overlay(None)
             self._draw()
+
+    # ---------------------------------------------------------------- road
+    def road_line_kind(self) -> bool:
+        return self.mode == "plan" and getattr(self, "plan", None) is not None and self.plan.kind == "road"
+
+    def _needs(self, kind):
+        return 2 if self.road_line_kind() else NEEDS[kind]
+
+    def show_road(self, r):
+        self.road_res = r
+        self.road_profile.set_result(r)
+        self.road_profile.setVisible(True)
+        self._draw()
+
+    def select_station(self, i):
+        self.road_sel = i
+        self.road_profile.set_selected(i)
+        self._draw()
+
+    def _draw_road(self):
+        r = self.road_res
+        st = r.stations
+        for a, b in zip(st[:-1], st[1:]):
+            cut = (a.cut_area + b.cut_area) >= (a.fill_area + b.fill_area)
+            col = (196, 40, 32, 95) if cut else (30, 90, 170, 95)
+            poly = [self._px(*a.catch_xy(-1)), self._px(*b.catch_xy(-1)), self._px(*b.catch_xy(1)),
+                    self._px(*a.catch_xy(1))]
+            self.canvas.add_polyline(poly, col[:3], 0.5, closed=True, fill=col)
+        regular = [i for i, s_ in enumerate(st) if s_.kind == ""]
+        every = max(1, len(regular) // 10)
+        show = set(regular[::every]) | {len(st) - 1}
+        for i, s_ in enumerate(st):
+            if i in show:
+                self.canvas.add_marker(*self._px(s_.x, s_.y), s_.label, "#0E1B33", 3)
+        k = getattr(self, "road_sel", 0)
+        if 0 <= k < len(st):
+            s_ = st[k]
+            self.canvas.add_polyline([self._px(*s_.catch_xy(-1)), self._px(*s_.catch_xy(1))], "#FFFFFF", 3.0)
+            self.canvas.add_marker(*self._px(s_.x, s_.y), s_.label, "#FFFFFF", 6)
 
     def load_plan(self, path: str):
         try:
@@ -635,7 +686,7 @@ class MeasurePage(Page):
         if self.finished or kind == "point":
             self._reset_shape()
         self.pts.append(p)
-        if len(self.pts) >= NEEDS[kind] and kind in ("point", "height"):
+        if len(self.pts) >= self._needs(kind) and kind in ("point", "height"):
             self.finished = True
             self._compute()
         self._draw()
@@ -655,8 +706,8 @@ class MeasurePage(Page):
             if not cleaned or math.dist(p, cleaned[-1]) > 1e-3:
                 cleaned.append(p)
         self.pts = cleaned
-        if len(self.pts) < NEEDS[kind]:
-            self.readout.setText(f"Click at least {NEEDS[kind]} points first.")
+        if len(self.pts) < self._needs(kind):
+            self.readout.setText(f"Click at least {self._needs(kind)} points first.")
             return
         self.finished = True
         self._draw()
@@ -683,6 +734,10 @@ class MeasurePage(Page):
         if self.overlay is not None:
             self.overlay = None
             self.canvas.set_overlay(None)
+        self.road_res = None
+        self.road_sel = 0
+        if hasattr(self, "road_profile"):
+            self.road_profile.setVisible(False)
 
     def _clear(self):
         self._reset_shape()

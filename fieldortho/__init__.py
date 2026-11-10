@@ -1,6 +1,6 @@
 """WhangDoodleGIS - offline drone mapping, map georeferencing and hazard scenarios for field teams."""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 APP_NAME = "WhangDoodleGIS"
 AUTHOR = "Migz Siao"
 # Earlier names of the app: their settings folders are migrated on first start

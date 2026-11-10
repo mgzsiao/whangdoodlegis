@@ -124,6 +124,16 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
   layers (outline, cut_fill_zones, spot_levels), dig/fill depth + finished ground GeoTIFFs, PNG map.
   Tests `tests/test_earthworks.py`; walkthrough `tests/gui_walkthrough4.py` (synthetic site in
   `tests/synthetic_site.py`).
+- Stage 3 done (0.6.0): road assistant in Plan earthworks ("Road, path or canal"): `core/road.py` (stations
+  every 5/10/15/20 m + bends + end, bisector direction at bends; road height: gentle (max grade, smoothed ground
+  with forward/backward grade limiting, start pinned) / follow / level / straight / typed targets; cross-section
+  template = carriageway with crown, shoulders, ditches in cut (1:1 inner side), pavement thickness as a vertical
+  step at the shoulder edge, daylight side slopes; average end-area volumes and running mass balance).
+  `core/road_report.py` (PDF with map, side view, station table, cross-section sheets; Excel Stations +
+  Cross-sections; CSVs; centre line / stations / works strips / edges / section lines). GUI:
+  `gui/road_widgets.py` (shape preview, section view, clickable side view under the map). Straight segments
+  only. Tests `tests/test_road.py`; walkthrough `tests/gui_walkthrough5.py [JOB_DIR]` (real job: plans go to temp).
+- The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.
 - Next stages (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,
   user-entered cross-section); 4 guided smooth curves, optional DPWH presets (show values + sources to the owner

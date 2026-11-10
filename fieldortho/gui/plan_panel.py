@@ -10,16 +10,17 @@ import math
 import os
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QSlider,
                                QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QProgressBar, QProgressDialog, QPushButton, QRadioButton,
                                QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
-from ..core import activity, crs as crsmod, earthworks as ew, measure as ms, system
+from ..core import activity, crs as crsmod, earthworks as ew, measure as ms, road as rdm, system
 from ..core.settings import config_dir
 from . import theme
 from .export_widgets import CrsPicker, FolderPicker, FormatChecks
 from .pages_setup import ChoiceCard, clear_layout
+from .road_widgets import SectionView, TemplatePreview
 from .widgets import IssueBox, StatCard, label
 from .workers import Task
 
@@ -118,14 +119,14 @@ class TypePointsDialog(QDialog):
         except Exception as e:
             self.msg.setText(str(e))
             return
-        if len(self.points) < 3:
-            self.msg.setText("Type at least three corners.")
+        if len(self.points) < 2:
+            self.msg.setText("Type at least two points (three corners for an area).")
             return
         self.accept()
 
 
 class ExportDialog(QDialog):
-    def __init__(self, plan_name: str, default_crs: str, lonlat, folder: str, parent=None):
+    def __init__(self, plan_name: str, default_crs: str, lonlat, folder: str, parent=None, road: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Report and files for engineers")
         self.setMinimumWidth(640)
@@ -156,6 +157,10 @@ class ExportDialog(QDialog):
         self.rasters = QCheckBox("Dig/fill depth and finished ground as GeoTIFF, colour map as PNG")
         self.rasters.setChecked(True)
         lay.addWidget(self.rasters)
+        if road:
+            self.rasters.setVisible(False)
+            self.spacing.setVisible(False)
+            f.labelForField(self.spacing).setVisible(False)
         lay.addWidget(label("Save to folder", "H2"))
         self.folder = FolderPicker(folder)
         lay.addWidget(self.folder)
@@ -178,10 +183,12 @@ class PlanPanel(QWidget):
     STEPS = {
         "pad": ["type", "draw", "height", "edges", "soil", "result"],
         "pile": ["type", "draw", "ref", "soil", "result"],
+        "road": ["type", "draw", "stations", "rise", "shape", "soil", "result"],
     }
     TITLES = {"type": "What are you planning?", "draw": "Draw the area", "height": "How high should the ground be?",
               "edges": "What happens at the edges?", "ref": "Measure from what?", "soil": "Soil and trucks",
-              "result": "Results"}
+              "result": "Results", "stations": "How often should we check the ground?",
+              "rise": "How high should the road be?", "shape": "What does the road look like across?"}
 
     def __init__(self, page):
         super().__init__()
@@ -224,7 +231,8 @@ class PlanPanel(QWidget):
         self.stack = QStackedWidget()
         self.pages = {}
         for key, fn in (("type", self._p_type), ("draw", self._p_draw), ("height", self._p_height),
-                        ("edges", self._p_edges), ("ref", self._p_ref), ("soil", self._p_soil),
+                        ("edges", self._p_edges), ("ref", self._p_ref), ("stations", self._p_stations),
+                        ("rise", self._p_rise), ("shape", self._p_shape), ("soil", self._p_soil),
                         ("result", self._p_result)):
             pw = QWidget()
             pl = QVBoxLayout(pw)
@@ -270,15 +278,16 @@ class PlanPanel(QWidget):
             c.clicked.connect(self._choose_type)
             lay.addWidget(c)
             self.cards[key] = c
-        later = ChoiceCard("road", "Road, path or canal", "Coming in the next version: stations every 5–20 m, "
-                                                         "side view, cross-sections and curves.")
-        later.setEnabled(False)
-        later.setStyleSheet("QFrame#ChoiceCard { background: #F6F8FB; }")
-        lay.addWidget(later)
+        c = ChoiceCard("road", "Road, path or canal",
+                       "Draw the line it follows. The app checks the ground every 5\u201320 m, sets the road height, "
+                       "builds the cross-sections from your road shape and adds up the digging and filling.")
+        c.clicked.connect(self._choose_type)
+        lay.addWidget(c)
+        self.cards["road"] = c
 
     def _p_draw(self, lay):
-        lay.addWidget(label("Click around the area on the map, corner by corner. Double-click (or press Enter) on the "
-                            "last corner to close the outline.", "", wrap=True))
+        self.draw_text = label("", "", wrap=True)
+        lay.addWidget(self.draw_text)
         row = QHBoxLayout()
         for text, fn in (("Undo last corner", self.page._undo), ("Start again", self.page._clear)):
             b = QPushButton(text)
@@ -409,6 +418,218 @@ class PlanPanel(QWidget):
         self.dsm_box = QVBoxLayout()
         lay.addLayout(self.dsm_box)
 
+    # ---- road pages
+    def _p_stations(self, lay):
+        lay.addWidget(label("The app measures the ground across the road at each station. Closer stations follow the "
+                            "ground more closely; farther ones are quicker.", "", wrap=True))
+        self.sgroup = QButtonGroup(self)
+        row = QHBoxLayout()
+        for v in (5, 10, 15, 20):
+            b = QRadioButton(f"every {v} m")
+            b.setProperty("v", float(v))
+            self.sgroup.addButton(b)
+            row.addWidget(b)
+            if v == 10:
+                b.setChecked(True)
+            b.toggled.connect(self._changed)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(explain("10 m is common for road plans. Use 5 m on hilly or curvy ground. Stations are also "
+                              "placed at every bend and at the end."))
+        self.station_info = label("", "Good", wrap=True)
+        lay.addWidget(self.station_info)
+
+    def interval(self) -> float:
+        b = self.sgroup.checkedButton()
+        return float(b.property("v")) if b else 10.0
+
+    def _p_rise(self, lay):
+        lay.addWidget(label("Where the road starts (0+000)", "H2"))
+        self.start_group = QButtonGroup(self)
+        self.rb_start_g = QRadioButton("Use the ground there")
+        self.rb_start_t = QRadioButton("I know the starting height")
+        for b in (self.rb_start_g, self.rb_start_t):
+            self.start_group.addButton(b)
+            lay.addWidget(b)
+            b.toggled.connect(self._changed)
+        self.rb_start_g.setChecked(True)
+        row = QHBoxLayout()
+        row.setContentsMargins(24, 0, 0, 0)
+        self.start_z = spin(-500, 9000, 0.0, " m", 2, 0.1, 130)
+        self.start_z.valueChanged.connect(self._changed)
+        row.addWidget(self.start_z)
+        self.start_hint = label("", "Hint")
+        row.addWidget(self.start_hint, 1)
+        lay.addLayout(row)
+        lay.addSpacing(6)
+        lay.addWidget(label("How should the road rise and fall?", "H2"))
+        self.pgroup = QButtonGroup(self)
+        rb = radio_block(self.pgroup, "gentle", "Keep slopes gentle",
+                         "Follows the land but never steeper than the slope below.", lay)
+        rb.setChecked(True)
+        row = QHBoxLayout()
+        row.setContentsMargins(24, 0, 0, 4)
+        self.max_grade = spin(0.5, 30, 8.0, " %", 1, 0.5, 100)
+        self.max_grade.valueChanged.connect(self._changed)
+        row.addWidget(QLabel("No steeper than"))
+        row.addWidget(self.max_grade)
+        row.addStretch(1)
+        lay.addLayout(row)
+        radio_block(self.pgroup, "follow", "Follow the ground", "Least digging: the road goes up and down with the "
+                    "land, only smoothed.", lay)
+        radio_block(self.pgroup, "level", "Keep it level", "One height (the starting height) for the whole road.", lay)
+        radio_block(self.pgroup, "straight", "One straight slope from start to end", "", lay)
+        row = QHBoxLayout()
+        row.setContentsMargins(24, 0, 0, 4)
+        self.end_ground = QCheckBox("End at the ground there, or at")
+        self.end_ground.setChecked(True)
+        self.end_z = spin(-500, 9000, 0.0, " m", 2, 0.1, 130)
+        self.end_ground.toggled.connect(lambda on: (self.end_z.setEnabled(not on), self._changed()))
+        self.end_z.setEnabled(False)
+        self.end_z.valueChanged.connect(self._changed)
+        row.addWidget(self.end_ground)
+        row.addWidget(self.end_z)
+        row.addStretch(1)
+        lay.addLayout(row)
+        radio_block(self.pgroup, "targets", "I have target heights",
+                    "Type a station and its height on each line, e.g. “50, 125.40” (or 0+050, 125.40). "
+                    "Straight slopes are drawn between them.", lay)
+        self.targets = QPlainTextEdit()
+        self.targets.setPlaceholderText("50, 125.40\n120, 127.10\n200, 126.00")
+        self.targets.setFixedHeight(80)
+        self.targets.setStyleSheet("background: white; color: #1A2233;")
+        self.targets.textChanged.connect(self._changed)
+        lay.addWidget(self.targets)
+        for b in self.pgroup.buttons():
+            b.toggled.connect(self._changed)
+        lay.addWidget(explain("8% means the road rises 8 m for every 100 m. Gentler slopes are easier for loaded "
+                              "trucks but usually need more digging. The heights are the road surface at the centre."))
+
+    def _parse_targets(self):
+        out = []
+        for line in self.targets.toPlainText().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            a, _, b = line.replace(";", ",").partition(",")
+            if not b:
+                parts = line.split()
+                if len(parts) < 2:
+                    raise ValueError(f"Could not read “{line}”: type station, height.")
+                a, b = parts[0], parts[1]
+            a = a.strip()
+            if "+" in a:
+                k, m = a.split("+", 1)
+                st = float(k) * 1000 + float(m)
+            else:
+                st = float(a)
+            out.append([st, float(b)])
+        return out
+
+    def _p_shape(self, lay):
+        self.preview = TemplatePreview()
+        lay.addWidget(self.preview)
+        g = QGridLayout()
+        g.setVerticalSpacing(6)
+        self.r_width = spin(1, 40, 6.0, " m", 2, 0.1, 110)
+        self.r_crown = spin(0, 10, 2.0, " %", 1, 0.5, 110)
+        g.addWidget(QLabel("Road width"), 0, 0)
+        g.addWidget(self.r_width, 0, 1)
+        g.addWidget(label("the part vehicles drive on, edge to edge", "Hint", wrap=True), 0, 2)
+        g.addWidget(QLabel("Higher in the middle"), 1, 0)
+        g.addWidget(self.r_crown, 1, 1)
+        g.addWidget(label("crown: falls this much toward each edge so rain runs off", "Hint", wrap=True), 1, 2)
+        self.r_sh = QCheckBox("Shoulders")
+        self.r_sh.setChecked(True)
+        self.r_sh_w = spin(0.1, 10, 1.5, " m", 2, 0.1, 110)
+        self.r_sh_p = spin(0, 15, 4.0, " %", 1, 0.5, 110)
+        g.addWidget(self.r_sh, 2, 0)
+        g.addWidget(self.r_sh_w, 2, 1)
+        g.addWidget(label("each side", "Hint"), 2, 2)
+        g.addWidget(QLabel("   sloping"), 3, 0)
+        g.addWidget(self.r_sh_p, 3, 1)
+        g.addWidget(label("away from the road", "Hint"), 3, 2)
+        self.r_ditch = QCheckBox("Ditches where the road is dug in")
+        g.addWidget(self.r_ditch, 4, 0, 1, 3)
+        self.r_ditch_w = spin(0.1, 5, 0.5, " m", 2, 0.1, 110)
+        self.r_ditch_d = spin(0.1, 3, 0.5, " m", 2, 0.1, 110)
+        g.addWidget(QLabel("   bottom width"), 5, 0)
+        g.addWidget(self.r_ditch_w, 5, 1)
+        g.addWidget(QLabel("   depth"), 6, 0)
+        g.addWidget(self.r_ditch_d, 6, 1)
+        g.addWidget(label("below the shoulder edge", "Hint"), 6, 2)
+        self.r_pave = spin(0, 2, 0.0, " m", 2, 0.05, 110)
+        g.addWidget(QLabel("Pavement + base"), 7, 0)
+        g.addWidget(self.r_pave, 7, 1)
+        g.addWidget(label("e.g. 0.20 m concrete + 0.15 m gravel = 0.35 m; digging goes this much deeper", "Hint",
+                          wrap=True), 7, 2)
+        self.r_soil = QComboBox()
+        for k, (name, _c, _f, _d) in ew.SOILS.items():
+            self.r_soil.addItem(name, k)
+        self.r_cut = spin(0.2, 10, 1.0, "  : 1", 1, 0.25, 110)
+        self.r_fill = spin(0.2, 10, 1.5, "  : 1", 1, 0.25, 110)
+        g.addWidget(QLabel("Soil for the sides"), 8, 0)
+        g.addWidget(self.r_soil, 8, 1, 1, 2)
+        g.addWidget(QLabel("Dug sides"), 9, 0)
+        g.addWidget(self.r_cut, 9, 1)
+        g.addWidget(label("out : up", "Hint"), 9, 2)
+        g.addWidget(QLabel("Filled sides"), 10, 0)
+        g.addWidget(self.r_fill, 10, 1)
+        g.addWidget(label("out : up", "Hint"), 10, 2)
+        g.setColumnStretch(2, 1)
+        lay.addLayout(g)
+        lay.addWidget(explain("These are starting values: change them to match your road. A DPWH road-class "
+                              "option comes in the next version."))
+        for w_ in (self.r_width, self.r_crown, self.r_sh_w, self.r_sh_p, self.r_ditch_w, self.r_ditch_d, self.r_pave):
+            w_.valueChanged.connect(self._shape_changed)
+        for c_ in (self.r_sh, self.r_ditch):
+            c_.toggled.connect(self._shape_changed)
+        self.r_soil.currentIndexChanged.connect(self._r_soil_changed)
+        self.r_cut.valueChanged.connect(self._r_ratio_edited)
+        self.r_fill.valueChanged.connect(self._r_ratio_edited)
+
+    def _shape_changed(self, *_):
+        self.r_sh_w.setEnabled(self.r_sh.isChecked())
+        self.r_sh_p.setEnabled(self.r_sh.isChecked())
+        self.r_ditch_w.setEnabled(self.r_ditch.isChecked())
+        self.r_ditch_d.setEnabled(self.r_ditch.isChecked())
+        self.preview.set_design(self.road_design())
+        self._changed()
+
+    def _r_soil_changed(self, _i):
+        _n, c, f, _d = ew.SOILS[self.r_soil.currentData()]
+        if c is not None:
+            for s_, v in ((self.r_cut, c), (self.r_fill, f)):
+                s_.blockSignals(True)
+                s_.setValue(v)
+                s_.blockSignals(False)
+        self._shape_changed()
+
+    def _r_ratio_edited(self, _v):
+        _n, c, f, _d = ew.SOILS[self.r_soil.currentData()]
+        if c is not None and (abs(self.r_cut.value() - c) > 1e-9 or abs(self.r_fill.value() - f) > 1e-9):
+            self.r_soil.blockSignals(True)
+            self.r_soil.setCurrentIndex(self.r_soil.findData("custom"))
+            self.r_soil.blockSignals(False)
+        self._shape_changed()
+
+    def road_design(self) -> rdm.RoadDesign:
+        b = self.pgroup.checkedButton()
+        try:
+            targets = self._parse_targets()
+        except ValueError:
+            targets = []
+        return rdm.RoadDesign(
+            interval=self.interval(), start_mode="ground" if self.rb_start_g.isChecked() else "typed",
+            start_z=self.start_z.value(), profile=b.property("key") if b else "gentle",
+            max_grade=self.max_grade.value(), end_mode="ground" if self.end_ground.isChecked() else "typed",
+            end_z=self.end_z.value(), targets=targets, width=self.r_width.value(), crown_pct=self.r_crown.value(),
+            shoulders=self.r_sh.isChecked(), shoulder_w=self.r_sh_w.value(), shoulder_pct=self.r_sh_p.value(),
+            ditch=self.r_ditch.isChecked(), ditch_w=self.r_ditch_w.value(), ditch_d=self.r_ditch_d.value(),
+            pavement_t=self.r_pave.value(), soil=self.r_soil.currentData(), cut_ratio=self.r_cut.value(),
+            fill_ratio=self.r_fill.value(), swell_pct=self.swell.value(), shrink_pct=self.shrink.value(),
+            truck_m3=self.truck.value())
+
     def _p_soil(self, lay):
         g = QGridLayout()
         g.setVerticalSpacing(4)
@@ -440,6 +661,26 @@ class PlanPanel(QWidget):
         self.res_box = QVBoxLayout()
         self.res_box.setSpacing(8)
         lay.addLayout(self.res_box)
+        self.road_box = QWidget()
+        rb = QVBoxLayout(self.road_box)
+        rb.setContentsMargins(0, 0, 0, 0)
+        rb.addWidget(label("Cross-sections", "H2"))
+        row = QHBoxLayout()
+        self.st_slider = QSlider(Qt.Horizontal)
+        self.st_slider.valueChanged.connect(self.select_station)
+        self.st_label = QLabel("")
+        self.st_label.setMinimumWidth(90)
+        row.addWidget(self.st_slider, 1)
+        row.addWidget(self.st_label)
+        rb.addLayout(row)
+        self.st_info = label("", "Hint", wrap=True)
+        rb.addWidget(self.st_info)
+        self.sec_view = SectionView()
+        rb.addWidget(self.sec_view)
+        rb.addWidget(label("Looking toward higher stations. Brown = ground now, navy = road and sides; heights "
+                           "exaggerated. Click the side view under the map to jump to a station.", "Hint", wrap=True))
+        self.road_box.setVisible(False)
+        lay.addWidget(self.road_box)
         row = QHBoxLayout()
         self.save_btn = QPushButton("Save plan")
         self.save_btn.clicked.connect(self.save)
@@ -473,18 +714,30 @@ class PlanPanel(QWidget):
         self.step_label.setText(f"{ew.TYPES[self.kind].upper()} · STEP {self.idx + 1} OF {n}")
         self.bar.setRange(0, n)
         self.bar.setValue(self.idx + 1)
-        self.title.setText(self.TITLES[key])
+        self.title.setText("Draw the road line" if key == "draw" and self.kind == "road" else self.TITLES[key])
         self.back_btn.setEnabled(self.idx > 0)
         last = self.idx == n - 1
         self.next_btn.setVisible(not last)
         nxt = self.steps()[self.idx + 1] if not last else ""
-        short = {"draw": "Draw the area", "height": "Height", "edges": "Edges", "ref": "Measure from",
-                 "soil": "Soil and trucks"}
+        short = {"draw": "Draw the road line" if self.kind == "road" else "Draw the area", "height": "Height",
+                 "edges": "Edges", "ref": "Measure from", "soil": "Soil and trucks", "stations": "Stations",
+                 "rise": "Road height", "shape": "Road shape"}
         self.next_btn.setText(("See the results" if nxt == "result" else f"Next: {short.get(nxt, '')}") + "  ›"
                               if nxt else "")
         if key == "draw":
             self._sync_src()
             self._shape_text()
+            self.draw_text.setText(
+                "Click along the middle of where the road will go, from its start to its end. Double-click (or "
+                "press Enter) on the last point to finish." if self.kind == "road" else
+                "Click around the area on the map, corner by corner. Double-click (or press Enter) on the last "
+                "corner to close the outline.")
+        if key == "stations":
+            self._station_text()
+        if key == "rise":
+            self._start_text()
+        if key == "shape":
+            self.preview.set_design(self.road_design())
         if key == "height":
             self._ground_text()
         if key == "soil":
@@ -511,7 +764,7 @@ class PlanPanel(QWidget):
     def _update_next(self):
         ok = True
         if self.step() == "draw":
-            ok = self.page.finished and len(self.page.pts) >= 3
+            ok = self.page.finished and len(self.page.pts) >= (2 if self.kind == "road" else 3)
         self.next_btn.setEnabled(ok)
 
     def _done_text(self):
@@ -519,7 +772,10 @@ class PlanPanel(QWidget):
         steps = self.steps()[: self.idx]
         if "type" in steps:
             lines.append(f"✔ Plan: {ew.TYPES[self.kind]}")
-        if "draw" in steps and self.page.finished:
+        if "draw" in steps and self.page.finished and self.kind == "road":
+            from shapely.geometry import LineString
+            lines.append(f"\u2714 Road line: {LineString(self.page.pts).length:,.0f} m")
+        elif "draw" in steps and self.page.finished:
             from shapely.geometry import Polygon
             lines.append(f"✔ Area: {Polygon(self.page.pts).area:,.0f} m², heights from "
                          f"{'bare ground' if self.src.currentData() == 'dtm' else 'ground + objects (DSM)'}")
@@ -533,9 +789,21 @@ class PlanPanel(QWidget):
         if "ref" in steps:
             b = self.rgroup.checkedButton()
             lines.append("✔ Measured from: " + (b.text().lower() if b else ""))
+        if "stations" in steps:
+            lines.append(f"\u2714 Stations every {self.interval():g} m")
+        if "rise" in steps:
+            b = self.pgroup.checkedButton()
+            lines.append("\u2714 Road height: " + ("start at the ground" if self.rb_start_g.isChecked() else
+                                                    f"start at {self.start_z.value():.2f} m") +
+                         ", " + (b.text().lower() if b else "") +
+                         (f" ({self.max_grade.value():g}%)" if b and b.property("key") == "gentle" else ""))
+        if "shape" in steps:
+            lines.append(f"\u2714 Road {self.r_width.value():g} m" +
+                         (f" + shoulders {self.r_sh_w.value():g} m" if self.r_sh.isChecked() else "") +
+                         (", ditches" if self.r_ditch.isChecked() else ""))
         if "soil" in steps:
             lines.append(f"✔ Soil: loosens {self.swell.value():.0f}%"
-                         + (f", packing {self.shrink.value():.0f}%" if self.kind == "pad" else ""))
+                         + (f", packing {self.shrink.value():.0f}%" if self.kind != "pile" else ""))
         self.done_box.setText("\n".join(lines))
         self.done_box.setVisible(bool(lines))
 
@@ -544,17 +812,20 @@ class PlanPanel(QWidget):
         if key not in self.STEPS:
             return
         changed = key != self.kind
+        was_road = self.kind == "road"
         self.kind = key
         for k, c in self.cards.items():
             c.set_selected(k == key)
         if key == "pile" and changed and self.page.files.get("dsm"):
             self.src.setCurrentIndex(self.src.findData("dsm"))
-        if key == "pad" and changed and self.page.files.get("dtm"):
+        if key in ("pad", "road") and changed and self.page.files.get("dtm"):
             self.src.setCurrentIndex(self.src.findData("dtm"))
         self.swell.setValue(ew.PILE_SWELL if key == "pile" else ms.DEFAULT_SWELL)
         self.takeoff = None
         if changed:
             self.page.clear_overlay()
+            if self.page.pts and (key == "road") != was_road:
+                self.page._clear()                  # an outline is not a road line (and the other way round)
         self.go(self.idx)
 
     def _sync_src(self):
@@ -570,8 +841,8 @@ class PlanPanel(QWidget):
         if self.kind == "pile" and self.src.currentData() == "dtm":
             self.src_hint.setText("For a stockpile choose the second option: the bare-ground model may have removed "
                                   "the pile.")
-        elif self.kind == "pad" and self.src.currentData() == "dsm":
-            self.src_hint.setText("For a lot use bare ground, otherwise trees and houses count as soil to dig.")
+        elif self.kind in ("pad", "road") and self.src.currentData() == "dsm":
+            self.src_hint.setText("Use bare ground, otherwise trees and houses count as soil to dig.")
         else:
             self.src_hint.setText("")
 
@@ -582,7 +853,34 @@ class PlanPanel(QWidget):
         self._src_hint()
         self.takeoff = None
 
+    def _station_text(self):
+        if self.page.finished and len(self.page.pts) >= 2:
+            try:
+                n = len(rdm.make_stations(self.page.pts, self.interval()))
+            except ValueError:
+                return
+            from shapely.geometry import LineString
+            self.station_info.setText(f"{n} stations along the {LineString(self.page.pts).length:,.0f} m line.")
+
+    def _start_text(self):
+        if not self.page.finished:
+            return
+        try:
+            z = ms.point_elevation(self.page._dem_path(), *self.page.pts[0])
+        except Exception:
+            return
+        self.start_hint.setText(f"ground at the start: {z:.2f} m")
+        if self.start_z.value() == 0:
+            self.start_z.blockSignals(True)
+            self.start_z.setValue(round(z, 2))
+            self.start_z.blockSignals(False)
+
     def _shape_text(self):
+        if self.kind == "road" and self.page.finished and len(self.page.pts) >= 2:
+            from shapely.geometry import LineString
+            ln = LineString(self.page.pts)
+            self.shape_info.setText(f"\u2714 Road line: {len(self.page.pts)} points, {ln.length:,.1f} m long.")
+            return
         if self.page.finished and len(self.page.pts) >= 3:
             from shapely.geometry import Polygon
             p = Polygon(self.page.pts)
@@ -673,7 +971,10 @@ class PlanPanel(QWidget):
     # ================================================================ compute
     def plan(self) -> dict:
         pts = [list(p) for p in self.page.pts]
-        name = self.name or ("Lot plan" if self.kind == "pad" else "Pile measurement")
+        name = self.name or {"pad": "Lot plan", "pile": "Pile measurement", "road": "Road plan"}[self.kind]
+        if self.kind == "road":
+            return ew.plan_dict(type="road", name=name, source=self.src.currentData(), points=pts,
+                                road=self.road_design())
         if self.kind == "pad":
             d = ew.PadDesign(level_mode="balanced" if self.rb_bal.isChecked() else "fixed",
                              level=self.level.value(), slope_pct=self.slope.value() if self.slope_cb.isChecked()
@@ -694,6 +995,12 @@ class PlanPanel(QWidget):
         if self.task is not None and self.task.isRunning():
             self.timer.start()
             return
+        if self.kind == "road":
+            try:
+                self._parse_targets()
+            except ValueError as e:
+                self._failed(str(e))
+                return
         plan, path = self.plan(), self.page._dem_path()
         self.estimate.setText("Calculating…")
         if self.step() == "result":
@@ -706,7 +1013,10 @@ class PlanPanel(QWidget):
 
     def _computed(self, t):
         self.takeoff = t
-        self.page.show_overlay(t)
+        if self.kind == "road":
+            self.page.show_road(t)
+        else:
+            self.page.show_overlay(t)
         self._show()
 
     def _failed(self, msg):
@@ -723,12 +1033,16 @@ class PlanPanel(QWidget):
         h = t.haul
         self.estimate.setText(f"<b>With these choices:</b> dig {t.cut:,.0f} m³ · fill {t.fill:,.0f} m³<br>"
                               f"{h.sentence()}")
+        self.road_box.setVisible(False)
         if self.step() != "result":
             return
         clear_layout(self.res_box)
         head = label(t.headline(), "", wrap=True)
         head.setStyleSheet("font-size: 14px;")
         self.res_box.addWidget(head)
+        if self.kind == "road":
+            self._show_road(t)
+            return
         pile = t.kind == "pile"
         cards = [StatCard("Above (pile)" if pile else "Dig (cut)", f"{t.cut:,.0f} m³", f"highest {t.max_cut:.2f} m"
                           if pile else f"deepest {t.max_cut:.2f} m"),
@@ -769,6 +1083,64 @@ class PlanPanel(QWidget):
                                             "Part of the outline is off the drone map or in a gap."))
         self.res_box.addWidget(label("Red on the map = dig, blue = fill.", "Hint"))
 
+    def _show_road(self, r):
+        cards = [StatCard("Dig (cut)", f"{r.cut:,.0f} m³", f"deepest {r.deepest_cut:.2f} m at the centre"),
+                 StatCard("Fill", f"{r.fill:,.0f} m³", f"highest {r.highest_fill:.2f} m at the centre"),
+                 StatCard("Net", f"{r.net:,.0f} m³", "dig \u2212 fill"),
+                 StatCard("Total moved", f"{r.total:,.0f} m³", "dig + fill"),
+                 StatCard("Length", f"{r.length:,.0f} m", f"{len(r.stations)} stations"),
+                 StatCard("Steepest part", f"{r.steepest:.1f} %", f"near {rdm.station_label(r.steepest_at)}")]
+        cards[0].t.setStyleSheet("color: #9C2A22;")
+        cards[1].t.setStyleSheet("color: #1E4E86;")
+        g = QGridLayout()
+        g.setSpacing(8)
+        for i, c in enumerate(cards):
+            g.addWidget(c, i // 2, i % 2)
+        self.res_box.addLayout(g)
+        box = QWidget()
+        box.setObjectName("Trucks")
+        box.setStyleSheet(f"QWidget#Trucks {{ background: {theme.INFO_SOFT}; border-radius: 8px; }}"
+                          "QLabel { background: transparent; }")
+        v = QVBoxLayout(box)
+        v.setContentsMargins(12, 10, 12, 10)
+        v.addWidget(label("Hauling", "H2"))
+        v.addWidget(label(r.haul.sentence(), "", wrap=True))
+        self.res_box.addWidget(box)
+        if r.steepest > 12:
+            self.res_box.addWidget(IssueBox("warning", f"Steep: {r.steepest:.1f}%",
+                                            "Parts of the road are steeper than most loaded trucks can climb "
+                                            "comfortably. Try \u201cKeep slopes gentle\u201d with a lower limit."))
+        if r.side_limit:
+            self.res_box.addWidget(IssueBox("warning", "Very deep or high sides",
+                                            f"At {r.side_limit} station(s) a side slope did not meet the ground within "
+                                            f"{rdm.MAX_SIDE:g} m. The real volume there is larger."))
+        if r.no_data:
+            self.res_box.addWidget(IssueBox("warning", "Off the map",
+                                            f"{r.no_data} station(s) are outside the drone map or in a gap."))
+        self.res_box.addWidget(label("On the map the strip shows the ground worked: red = mostly dig, blue = mostly "
+                                     "fill.", "Hint", wrap=True))
+        self.road_box.setVisible(True)
+        self.st_slider.blockSignals(True)
+        self.st_slider.setRange(0, len(r.stations) - 1)
+        self.st_slider.blockSignals(False)
+        self.select_station(min(self.st_slider.value(), len(r.stations) - 1))
+
+    def select_station(self, i):
+        r = self.takeoff
+        if self.kind != "road" or r is None or not (0 <= i < len(r.stations)):
+            return
+        if self.st_slider.value() != i:
+            self.st_slider.blockSignals(True)
+            self.st_slider.setValue(i)
+            self.st_slider.blockSignals(False)
+        st = r.stations[i]
+        self.st_label.setText(st.label)
+        self.st_info.setText(f"Ground {st.ground:.2f} m, road {st.design:.2f} m ("
+                             + (f"dig {st.depth:.2f} m" if st.depth >= 0 else f"fill {-st.depth:.2f} m")
+                             + f" at the centre). Dig {st.cut_area:.2f} m², fill {st.fill_area:.2f} m².")
+        self.sec_view.set_station(st)
+        self.page.select_station(i)
+
     # ================================================================ shapes in
     def _import_file(self):
         p, _ = QFileDialog.getOpenFileName(self, "Outline from a file", os.path.expanduser("~"),
@@ -781,9 +1153,10 @@ class PlanPanel(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Cannot read the file", str(e))
             return
-        shapes = [s for s in shapes if len(s["points"]) >= 3]
+        need = 2 if self.kind == "road" else 3
+        shapes = [s for s in shapes if len(s["points"]) >= need]
         if not shapes:
-            QMessageBox.information(self, "No outline found", "The file has no line or area with 3 or more corners.")
+            QMessageBox.information(self, "Nothing found", f"The file has no line or area with {need} or more points.")
             return
         s = shapes[0]
         if len(shapes) > 1:
@@ -808,6 +1181,8 @@ class PlanPanel(QWidget):
         d.dst_wkt = self.page.view.crs_wkt
         if d.exec():
             self._set_points(d.points)
+            if self.kind != "road" and len(d.points) < 3:
+                self.page._clear()
 
     def _lonlat(self):
         from ..core.terrain import lonlat
@@ -837,7 +1212,7 @@ class PlanPanel(QWidget):
 
     # ================================================================ save / export / load
     def _ask_name(self) -> bool:
-        default = self.name or ("Lot plan" if self.kind == "pad" else "Pile measurement")
+        default = self.name or {"pad": "Lot plan", "pile": "Pile measurement", "road": "Road plan"}[self.kind]
         name, ok = QInputDialog.getText(self, "Name of the plan", "Name:", text=default)
         if not ok or not name.strip():
             return False
@@ -862,7 +1237,8 @@ class PlanPanel(QWidget):
         t = self.takeoff
         activity.record(activity.Activity(kind="earthworks", name=self.name, path=self.plan_path,
                                           folder=folder or os.path.dirname(self.plan_path),
-                                          size=f"{t.area.area_2d:,.0f} m²", crs="",
+                                          size=(f"{t.length:,.0f} m road" if self.kind == "road"
+                                                else f"{t.area.area_2d:,.0f} m²"), crs="",
                                           status=f"{status} · dig {t.cut:,.0f} / fill {t.fill:,.0f} m³"))
 
     def export(self):
@@ -875,7 +1251,8 @@ class PlanPanel(QWidget):
         job = self.page.job
         epsg = rasterio_epsg(self.page._dem_path())
         folder = os.path.join(ew.plans_dir(job.job_dir), ew.safe(self.name))
-        d = ExportDialog(self.name, f"EPSG:{epsg}" if epsg else "EPSG:4326", self._lonlat(), folder, self)
+        d = ExportDialog(self.name, f"EPSG:{epsg}" if epsg else "EPSG:4326", self._lonlat(), folder, self,
+                         road=self.kind == "road")
         if not d.exec():
             return
         t, plan = self.takeoff, self.plan()
@@ -883,17 +1260,28 @@ class PlanPanel(QWidget):
         out, crs = d.folder.path(), d.crs.code()
         info = {"project": d.project.text(), "location": d.location.text(), "prepared_by": d.by.text()}
         fmts, rasters, spacing = d.fmts.selected(), d.rasters.isChecked(), d.spacing.value()
-        from ..core import earthworks_report as er
+        from ..core import earthworks_report as er, road_report as rr
         dlg = QProgressDialog("Making the report and files…", None, 0, 100, self)
         dlg.setWindowTitle("Report and files")
         dlg.setMinimumDuration(0)
         dlg.setWindowModality(Qt.WindowModal)
-        task = Task(lambda tk: er.export_package(t, plan, dem, ortho, out, crs, info, job, fmts, rasters, spacing,
-                                                 progress=tk.report), self)
-        task.progress.connect(lambda p, s: (dlg.setValue(int(p)), dlg.setLabelText(s)))
         result = {}
-        task.done.connect(lambda files: result.update(files=files))
-        task.failed.connect(lambda m: result.update(error=m))
+        road = self.kind == "road"
+
+        def work(tk):           # stores its own result: queued signals may not be delivered before wait()
+            try:
+                if road:
+                    result["files"] = rr.export_road(t, plan, dem, ortho, out, crs, info, job, fmts,
+                                                     progress=tk.report)
+                else:
+                    result["files"] = er.export_package(t, plan, dem, ortho, out, crs, info, job, fmts, rasters,
+                                                        spacing, progress=tk.report)
+            except Exception as e:  # shown below in plain words
+                import traceback
+                traceback.print_exc()
+                result["error"] = str(e) or e.__class__.__name__
+        task = Task(work, self)
+        task.progress.connect(lambda p, s: (dlg.setValue(int(p)), dlg.setLabelText(s)))
         task.finished.connect(dlg.close)
         self._export_task = task
         task.start()
@@ -917,6 +1305,33 @@ class PlanPanel(QWidget):
         elif mb.clickedButton() is fb:
             system.open_path(out)
 
+    def _load_road(self, rd):
+        _set_radio(self.sgroup, float(rd.interval), "v")
+        (self.rb_start_g if rd.start_mode == "ground" else self.rb_start_t).setChecked(True)
+        if rd.start_z == rd.start_z:
+            self.start_z.setValue(rd.start_z)
+        _set_radio(self.pgroup, rd.profile)
+        self.max_grade.setValue(rd.max_grade)
+        self.end_ground.setChecked(rd.end_mode == "ground")
+        if rd.end_z == rd.end_z:
+            self.end_z.setValue(rd.end_z)
+        self.targets.setPlainText("\n".join(f"{a:g}, {b:.2f}" for a, b in rd.targets))
+        self.r_width.setValue(rd.width)
+        self.r_crown.setValue(rd.crown_pct)
+        self.r_sh.setChecked(rd.shoulders)
+        self.r_sh_w.setValue(rd.shoulder_w)
+        self.r_sh_p.setValue(rd.shoulder_pct)
+        self.r_ditch.setChecked(rd.ditch)
+        self.r_ditch_w.setValue(rd.ditch_w)
+        self.r_ditch_d.setValue(rd.ditch_d)
+        self.r_pave.setValue(rd.pavement_t)
+        self.r_soil.setCurrentIndex(max(0, self.r_soil.findData(rd.soil)))
+        self.r_cut.setValue(rd.cut_ratio)
+        self.r_fill.setValue(rd.fill_ratio)
+        self.swell.setValue(rd.swell_pct)
+        self.shrink.setValue(rd.shrink_pct)
+        self.truck.setValue(rd.truck_m3)
+
     def new_plan(self):
         self.name, self.plan_path, self.takeoff = "", "", None
         self.page._clear()
@@ -928,7 +1343,9 @@ class PlanPanel(QWidget):
         self._choose_type(plan["type"])
         if plan.get("source") in self.page.files:
             self.src.setCurrentIndex(self.src.findData(plan["source"]))
-        if plan["type"] == "pad":
+        if plan["type"] == "road":
+            self._load_road(rdm.design_from(plan))
+        elif plan["type"] == "pad":
             d = ew.design_from(plan)
             (self.rb_bal if d.level_mode == "balanced" else self.rb_fix).setChecked(True)
             if d.level == d.level:
@@ -957,6 +1374,12 @@ class PlanPanel(QWidget):
         self.page.set_shape([tuple(q) for q in plan["points"]])
         self.takeoff = None
         self.go(len(self.steps()) - 1)
+
+
+def _set_radio(group, key, prop="key"):
+    for b in group.buttons():
+        if b.property(prop) == key:
+            b.setChecked(True)
 
 
 def rasterio_epsg(path: str):

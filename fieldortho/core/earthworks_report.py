@@ -462,7 +462,7 @@ def job_quality(job, t: ew.Takeoff, source: str, dem_path: str) -> list[tuple[st
         q.append(("Heights", {"as_recorded": "as recorded by the drone", "egm96": "above mean sea level (EGM96)",
                               "offset": f"drone heights shifted by {o.height_offset_m:+.2f} m"}.get(o.heights, o.heights)))
         q.append(("Drone map", f"{job.name} (processed {job.finished[:10] or job.created[:10]})"))
-    q.append(("Missing height data inside the outline", f"{t.no_data_pct:.1f}%"))
+    q.append(("Missing height data", f"{t.no_data_pct:.1f}%"))
     if source == "dtm":
         q.append(("Note", "The bare-ground model removes trees and buildings; dense vegetation can still leave "
                           "errors."))
