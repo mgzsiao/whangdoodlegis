@@ -8,3 +8,4 @@ pyshp>=2.3
 scipy>=1.11
 shapely>=2.0
 pyogrio>=0.7
+openpyxl>=3.1

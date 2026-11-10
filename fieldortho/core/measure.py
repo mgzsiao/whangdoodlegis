@@ -276,6 +276,8 @@ class VolumeResult(AreaResult):
     max_fill: float = 0.0
     dz: np.ndarray | None = field(default=None, repr=False)          # ground - reference (NaN outside)
     transform: object = field(default=None, repr=False)
+    ground: np.ndarray | None = field(default=None, repr=False)      # heights on the same grid
+    crs_wkt: str = ""
 
     @property
     def net_m3(self) -> float:
@@ -335,7 +337,8 @@ def measure_volume(path: str, pts, reference: str = "edge", level: float | None 
                         cut_m3=float(d[up].sum() * ca), fill_m3=float(-d[dn].sum() * ca),
                         cut_area=float(up.sum() * ca), fill_area=float(dn.sum() * ca),
                         max_cut=float(d[up].max()) if up.any() else 0.0,
-                        max_fill=float(-d[dn].min()) if dn.any() else 0.0, dz=dz, transform=dem.transform)
+                        max_fill=float(-d[dn].min()) if dn.any() else 0.0, dz=dz, transform=dem.transform,
+                        ground=dem.z, crs_wkt=dem.crs_wkt)
 
 
 # ============================================================================ hauling

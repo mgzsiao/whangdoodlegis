@@ -369,6 +369,9 @@ class MainWindow(QMainWindow):
         elif row.kind == "georef":
             self.show_page(self.georef)
             self.georef.load_session(row.ref)
+        elif row.kind == "earthworks":
+            self.show_page(self.measure)
+            self.measure.load_plan(row.ref)
         else:
             self.show_page(self.models)
             self.models.load_scenario(row.ref)

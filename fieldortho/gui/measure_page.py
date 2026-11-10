@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
                                QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
-from ..core import exporters as ex, jobs, measure as ms, system
+from ..core import earthworks as ew, exporters as ex, jobs, measure as ms, system
 from ..core.model_export import background_for, slope_rgb
 from ..core.terrain import load_dem, lonlat as dem_lonlat
 from . import theme
@@ -34,7 +34,7 @@ TOOLS = [  # key, button text, title, instruction
      "Click around a pile, a hole or a lot to level. Double-click (or press Enter) to close the outline."),
 ]
 TOOL = {t[0]: t for t in TOOLS}
-NEEDS = {"point": 1, "height": 2, "path": 2, "area": 3, "volume": 3}
+NEEDS = {"point": 1, "height": 2, "path": 2, "area": 3, "volume": 3, "plan": 3}
 SHAPE = "#F5B841"          # amber, the logo colour: stands out on photos and relief
 SAVED = "#1F3F77"
 
@@ -138,7 +138,19 @@ class MeasurePage(Page):
         self.source.setToolTip("The processed drone job to measure on.")
         ob = QPushButton("Open job folder…")
         ob.clicked.connect(self._browse_job)
-        self.set_actions([QLabel("Drone map"), self.source, ob])
+        self.mode_group = QButtonGroup(self)
+        modes = []
+        for i, text in enumerate(("Measure", "Plan earthworks")):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setChecked(i == 0)
+            b.setToolTip("Quick measurements" if i == 0 else "Guided: level a lot or pad, measure a pile, with a "
+                                                              "report for engineers")
+            self.mode_group.addButton(b, i)
+            modes.append(b)
+        self.mode_group.idClicked.connect(lambda i: self.set_mode("plan" if i else "measure"))
+        self.set_actions(modes + [QLabel("   Drone map"), self.source, ob])
+        self.mode = "measure"
 
         split = QSplitter()
         left = QWidget()
@@ -171,7 +183,11 @@ class MeasurePage(Page):
         self.readout = label("Choose a processed drone job above.", "Muted")
         ll.addWidget(self.readout)
         split.addWidget(left)
-        split.addWidget(self._panel())
+        from PySide6.QtWidgets import QStackedWidget
+        self.right = QStackedWidget()
+        self.right.setMinimumWidth(420)
+        self.right.addWidget(self._panel())
+        split.addWidget(self.right)
         split.setStretchFactor(0, 1)
         split.setSizes([900, 420])
         self.root.addWidget(split, 1)
@@ -199,6 +215,9 @@ class MeasurePage(Page):
         self.rerun.setInterval(350)
         self.rerun.timeout.connect(self._compute)
         self.source.currentIndexChanged.connect(self._source_changed)
+        from .plan_panel import PlanPanel
+        self.plan = PlanPanel(self)
+        self.right.addWidget(self.plan)
         self._tool_changed(0)
 
     # ================================================================ panel
@@ -447,7 +466,12 @@ class MeasurePage(Page):
         if self.job is None:
             return
         self._load_view()
-        if self.finished:
+        if self.mode == "plan":
+            self.plan.takeoff = None
+            self.clear_overlay()
+            if self.finished:
+                self.plan.compute()
+        elif self.finished:
             self._compute()
 
     # ================================================================ drawing
@@ -492,7 +516,7 @@ class MeasurePage(Page):
                 c, r = self._px(xy[:, 0], xy[:, 1])
                 major = f.properties["MAJOR"]
                 self.canvas.add_polyline(list(zip(c, r)), "#5D4037" if major else "#8D6E63", 1.2 if major else 0.6)
-        for m in self.saved:
+        for m in (self.saved if self.mode == "measure" else []):
             px = [self._px(*p) for p in m.points]
             if m.kind == "point":
                 self.canvas.add_marker(*px[0], m.name, SAVED, 5)
@@ -503,7 +527,7 @@ class MeasurePage(Page):
             return
         kind = self.kind()
         px = [self._px(*p) for p in self.pts]
-        closed = kind in ("area", "volume") and self.finished
+        closed = kind in ("area", "volume", "plan") and self.finished
         fill = (245, 184, 65, 45) if closed and self.overlay is None else None
         if len(px) >= 2:
             self.canvas.add_polyline(px, SHAPE, 2.6, closed=closed, fill=fill)
@@ -513,7 +537,64 @@ class MeasurePage(Page):
 
     # ================================================================ tools / mouse
     def kind(self) -> str:
+        if self.mode == "plan":
+            return "plan"
         return TOOLS[max(0, self.tool_group.checkedId())][0]
+
+    # ---------------------------------------------------------------- plan mode
+    def set_mode(self, m: str):
+        self.mode_group.button(1 if m == "plan" else 0).setChecked(True)
+        if m == self.mode:
+            return
+        self.mode = m
+        self.right.setCurrentIndex(1 if m == "plan" else 0)
+        for b in self.tool_group.buttons():
+            b.setEnabled(m == "measure")
+        self._reset_shape()
+        self._draw()
+        if m == "plan":
+            self.plan.shape_changed()
+            self.plan.go(self.plan.idx)
+        else:
+            self.canvas.set_pick_cursor(True)
+            self._show_result()
+
+    def set_shape(self, pts):
+        self._reset_shape()
+        self.pts = [tuple(map(float, p)) for p in pts]
+        self.finished = True
+        self._draw()
+        if self.mode == "plan":
+            self.plan.shape_changed()
+
+    def show_overlay(self, res):
+        self.overlay = self._overlay_for(res)
+        self.canvas.set_overlay(self.overlay)
+        self._draw()
+
+    def clear_overlay(self):
+        if self.overlay is not None:
+            self.overlay = None
+            self.canvas.set_overlay(None)
+            self._draw()
+
+    def load_plan(self, path: str):
+        try:
+            plan = ew.load_plan(path)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Cannot open plan", f"{os.path.basename(path)}: {e}")
+            return
+        job_dir = plan.get("job_dir", "")
+        if not jobs.Job.is_job_dir(job_dir):          # job folder moved: the plan sits in <job>/Earthworks
+            job_dir = os.path.dirname(os.path.dirname(os.path.abspath(path)))
+        if not jobs.Job.is_job_dir(job_dir):
+            QMessageBox.warning(self, "Drone map missing", "The drone mapping job of this plan was not found.")
+            return
+        self.use_job(jobs.Job.load(job_dir))
+        if self.job is None:
+            return
+        self.set_mode("plan")
+        self.plan.load(plan, path)
 
     def _tool_changed(self, i):
         key, _b, title, hint = TOOLS[i]
@@ -546,6 +627,9 @@ class MeasurePage(Page):
     def _click(self, sx, sy):
         if self.view is None or (self.task is not None and self.task.isRunning()):
             return
+        if self.mode == "plan" and not self.plan.drawing_allowed():
+            self.readout.setText("To change the outline, go back to the step “Draw the area”.")
+            return
         p = self._xy(sx, sy)
         kind = self.kind()
         if self.finished or kind == "point":
@@ -555,6 +639,8 @@ class MeasurePage(Page):
             self.finished = True
             self._compute()
         self._draw()
+        if self.mode == "plan":
+            self.plan.shape_changed()
 
     def _dclick(self, _sx, _sy):
         self._finish()
@@ -574,12 +660,23 @@ class MeasurePage(Page):
             return
         self.finished = True
         self._draw()
+        if self.mode == "plan":
+            self.plan.shape_changed()
+            return
         self._compute()
 
     def _undo(self):
+        if self.mode == "plan" and not self.plan.drawing_allowed():
+            return
         if self.pts and not self.finished:
             self.pts.pop()
             self._draw()
+        elif self.pts and self.mode == "plan":       # reopen a closed outline to edit its last corner
+            self.finished = False
+            self.clear_overlay()
+            self._draw()
+        if self.mode == "plan":
+            self.plan.shape_changed()
 
     def _reset_shape(self):
         self.pts, self.finished, self.result, self.result_kind = [], False, None, None
@@ -591,6 +688,8 @@ class MeasurePage(Page):
         self._reset_shape()
         self._draw()
         self._show_result()
+        if getattr(self, "plan", None) is not None and self.mode == "plan":
+            self.plan.shape_changed()
 
     def _ref_changed(self):
         if self.ref_group.checkedButton().property("ref") == "level" and self.result is not None \

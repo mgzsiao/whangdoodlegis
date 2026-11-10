@@ -16,7 +16,8 @@ from datetime import datetime
 
 from .settings import config_dir
 
-KINDS = {"georef": "Georeference", "flood": "Flood scenario", "landslide": "Landslide scenario"}
+KINDS = {"georef": "Georeference", "flood": "Flood scenario", "landslide": "Landslide scenario",
+         "earthworks": "Earthworks plan"}
 MAX_ITEMS = 200
 
 

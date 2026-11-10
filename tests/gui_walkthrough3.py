@@ -23,11 +23,9 @@ os.environ["XDG_CONFIG_HOME"] = os.path.join(tmp, "cfg")
 os.environ["APPDATA"] = os.path.join(tmp, "cfg")          # keep the real settings untouched
 
 import numpy as np  # noqa: E402
-import rasterio  # noqa: E402
-from rasterio.transform import from_origin  # noqa: E402
 from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox  # noqa: E402
 
-from fieldortho.core import jobs, measure as ms  # noqa: E402
+from fieldortho.core import measure as ms  # noqa: E402
 from fieldortho.core.settings import Settings  # noqa: E402
 from fieldortho.gui.main_window import MainWindow  # noqa: E402
 from fieldortho.gui.theme import STYLESHEET  # noqa: E402
@@ -42,29 +40,8 @@ app = QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
 
-X0, Y0, CELL, N = 695600.0, 982600.0, 0.1, 1000        # 100 x 100 m, UTM 51N
-CX, CY = X0 + 50, Y0 - 50
-
-
-def synthetic_job(root):
-    job_dir = os.path.join(root, "Synthetic pile site")
-    gis = os.path.join(job_dir, "GIS")
-    os.makedirs(gis)
-    r, c = np.mgrid[0:N, 0:N]
-    x, y = X0 + (c + 0.5) * CELL, Y0 - (r + 0.5) * CELL
-    ground = 120 + 0.05 * (x - X0) + 0.5 * np.sin((y - Y0) / 15)
-    pile = np.clip(10 - np.hypot(x - CX, y - CY) * 0.5, 0, None)          # cone 10 m high, 20 m radius
-    files = {}
-    for key, z in (("dtm", ground), ("dsm", ground + pile)):
-        p = os.path.join(gis, f"site_{key.upper()}.tif")
-        with rasterio.open(p, "w", driver="GTiff", width=N, height=N, count=1, dtype="float32", crs="EPSG:32651",
-                           transform=from_origin(X0, Y0, CELL, CELL), nodata=-9999) as ds:
-            ds.write(z.astype("float32"), 1)
-        files[key] = p
-    job = jobs.Job(name="Synthetic pile site", job_dir=job_dir, status=jobs.STATUS_DONE,
-                   summary={"files": files})
-    job.save()
-    return job_dir
+sys.path.insert(0, HERE)
+from synthetic_site import CX, CY, synthetic_job  # noqa: E402
 
 
 job_dir = REAL_JOB or synthetic_job(os.path.join(tmp, "jobs"))

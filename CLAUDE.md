@@ -114,6 +114,16 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
   slopes / 3-D lengths are measured over 0.5 m so 5 cm noise does not inflate them.
 - Accuracy tests: `tests/test_measure.py` (cone, tilted plane, 30° slope vs. formulas). GUI walkthrough:
   `QT_QPA_PLATFORM=offscreen QT_QPA_FONTDIR=C:\Windows\Fonts python tests/gui_walkthrough3.py OUTDIR [JOB_DIR]`.
+- Stage 2 done (0.5.0): "Plan earthworks" mode on the same screen (`gui/plan_panel.py`): guided steps for
+  "Level a lot or pad" (balanced or typed height, optional drainage slope + direction, sloped sides by soil type
+  or walls, swell/shrink, trucks) and "Pile, hole or deposit". Core: `core/earthworks.py` (design_pad uses a
+  distance transform for daylighting side slopes, half-cell corrected; balanced level by bisection incl. shrink;
+  outline import from KML/KMZ/GPX/SHP/GPKG/GeoJSON/DXF; typed corners; plans saved to
+  `<job>/Earthworks/<name>.plan.json`, listed in Jobs as "Earthworks plan"). `core/earthworks_report.py` writes
+  the package: PDF (Qt QPdfWriter + QTextDocument), Excel (openpyxl, new dependency), CSVs, GPKG/KML/DXF/...
+  layers (outline, cut_fill_zones, spot_levels), dig/fill depth + finished ground GeoTIFFs, PNG map.
+  Tests `tests/test_earthworks.py`; walkthrough `tests/gui_walkthrough4.py` (synthetic site in
+  `tests/synthetic_site.py`).
 - Next stages (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,
   user-entered cross-section); 4 guided smooth curves, optional DPWH presets (show values + sources to the owner
