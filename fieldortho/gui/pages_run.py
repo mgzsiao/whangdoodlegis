@@ -244,6 +244,7 @@ class ResultsPage(Page):
     new_job = Signal()
     home = Signal()
     model = Signal()
+    measure = Signal()
 
     def __init__(self, session):
         super().__init__(session)
@@ -285,6 +286,10 @@ class ResultsPage(Page):
         self.model_btn = QPushButton("Flood && landslide model")
         self.model_btn.clicked.connect(self.model.emit)
         right.addWidget(self.model_btn)
+        self.measure_btn = QPushButton("Measure && earthworks")
+        self.measure_btn.setToolTip("Measure heights, paths, areas and volumes on this map.")
+        self.measure_btn.clicked.connect(self.measure.emit)
+        right.addWidget(self.measure_btn)
         self.open_btn = QPushButton("Open GIS folder")
         self.open_btn.clicked.connect(lambda: system.open_path(self.s.job.gis_dir))
         right.addWidget(self.open_btn)

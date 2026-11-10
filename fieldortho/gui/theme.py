@@ -31,6 +31,8 @@ ICONS = {"home": "", "drone": "", "georef": "", "flood": "", "jobs":
          "settings": "", "heart": "", "info": "", "help": "", "zoom_in": "",
          "zoom_out": "", "fit": "", "folder": "", "search": "", "open": ""}
 
+ICONS["measure"] = ""     # ruler and set square (same code point in both icon fonts)
+
 LEVEL_COLORS = {"error": (ERROR, ERROR_SOFT), "warning": (WARN, WARN_SOFT), "info": (INFO, INFO_SOFT),
                 "ok": (OK, OK_SOFT)}
 

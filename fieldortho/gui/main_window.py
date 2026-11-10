@@ -16,6 +16,7 @@ from .about import AboutDialog, SupportDialog, logo
 from .dialogs import GcpDialog, SettingsDialog
 from .georef_page import GeorefPage
 from .jobs_page import JobsPage
+from .measure_page import MeasurePage
 from .model_page import ModelPage
 from .pages_run import ProcessPage, ResultsPage
 from .pages_setup import CheckPage, HomePage, OptionsPage, PhotosPage
@@ -129,12 +130,13 @@ class MainWindow(QMainWindow):
         self.results = ResultsPage(s)
         self.georef = GeorefPage(s)
         self.models = ModelPage(s)
+        self.measure = MeasurePage(s)
         self.jobs = JobsPage(s)
         ob = QPushButton("Open job folder…")
         ob.clicked.connect(self._browse_job)
         self.jobs.set_actions([ob])
         self.wizard = [self.photos, self.check, self.options, self.process, self.results]
-        for p in (self.home, *self.wizard, self.georef, self.models, self.jobs):
+        for p in (self.home, *self.wizard, self.georef, self.models, self.measure, self.jobs):
             self.stack.addWidget(p)
             p.heading_changed.connect(self._refresh_header)
         self._last_wizard = None
@@ -144,7 +146,9 @@ class MainWindow(QMainWindow):
         self.jobs.open_row.connect(self.open_row)
         self.home.open_georef.connect(lambda: self.show_page(self.georef))
         self.home.open_models.connect(lambda: self.show_page(self.models))
+        self.home.open_measure.connect(lambda: self.show_page(self.measure))
         self.results.model.connect(self._model_from_job)
+        self.results.measure.connect(self._measure_from_job)
         self.photos.go_back.connect(self.show_home)
         self.photos.go_next.connect(self._photos_done)
         self.check.go_back.connect(lambda: self.show_page(self.photos))
@@ -188,7 +192,9 @@ class MainWindow(QMainWindow):
         for key, icon, text, fn in (("home", "home", "Home", self.show_home),
                                     ("drone", "drone", "Drone mapping", self._nav_drone),
                                     ("georef", "georef", "Georeference a map", lambda: self.show_page(self.georef)),
-                                    ("flood", "flood", "Flood & landslide", lambda: self.show_page(self.models))):
+                                    ("flood", "flood", "Flood & landslide", lambda: self.show_page(self.models)),
+                                    ("measure", "measure", "Measure & earthworks",
+                                     lambda: self.show_page(self.measure))):
             b = NavButton(icon, text)
             b.clicked.connect(fn)
             v.addWidget(b)
@@ -296,7 +302,8 @@ class MainWindow(QMainWindow):
         if page in self.wizard:
             self._last_wizard = page
         key = ("home" if page is self.home else "georef" if page is self.georef else
-               "flood" if page is self.models else "jobs" if page is self.jobs else "drone")
+               "flood" if page is self.models else "measure" if page is self.measure else
+               "jobs" if page is self.jobs else "drone")
         for k, b in self.nav.items():
             b.setChecked(k == key)
         page.enter()
@@ -321,6 +328,11 @@ class MainWindow(QMainWindow):
         job = self.s.job
         self.show_page(self.models)
         self.models.use_job(job)
+
+    def _measure_from_job(self):
+        job = self.s.job
+        self.show_page(self.measure)
+        self.measure.use_job(job)
 
     def show_home(self):
         if not self.process.busy():

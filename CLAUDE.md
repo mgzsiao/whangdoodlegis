@@ -104,6 +104,22 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
 - GUI walkthroughs on Windows need `FIELDORTHO_TEST_PHOTOS=C:\data\aukerman\images` and
   `FAKE_ODM_ORTHO=C:\data\aukerman\aukerman.png`.
 
+## Measure & earthworks (0.4.0, in progress)
+- Stage 0 (Windows build/install) is done on the owner's PC: tests pass on Windows, 0.3.0 installed, engine OK.
+- Stage 1 done: `core/measure.py` (point, height difference, path + side view, area/perimeter/surface area,
+  volume cut/fill against edge surface / average edge level / fixed level / lowest point, truck trips, saved
+  measurements in `<job>/measurements.json`, export to GPKG/SHP/GeoJSON/KML/DXF + CSV) and
+  `gui/measure_page.py` (nav entry, Home tile, "Measure & earthworks" button on drone Results).
+  Calculations read the DEM at full detail for the drawn area (`read_area`, thinned only above 4 M cells);
+  slopes / 3-D lengths are measured over 0.5 m so 5 cm noise does not inflate them.
+- Accuracy tests: `tests/test_measure.py` (cone, tilted plane, 30° slope vs. formulas). GUI walkthrough:
+  `QT_QPA_PLATFORM=offscreen QT_QPA_FONTDIR=C:\Windows\Fonts python tests/gui_walkthrough3.py OUTDIR [JOB_DIR]`.
+- Next stages (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
+  2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,
+  user-entered cross-section); 4 guided smooth curves, optional DPWH presets (show values + sources to the owner
+  first), mass haul; 5 LandXML for Civil 3D, DXF, Excel, full PDF; 6 compare two surveys, 3-D export .dae + STL.
+  Plain-English guided steps, English only, truck trips for 6 and 10 m³ plus a custom size.
+
 ## Owner
 Rictu (DILG Region 10, Philippines). Non-specialist in packaging: explain results plainly, give
 the path of the finished installer, and say which file to give to field laptops without internet

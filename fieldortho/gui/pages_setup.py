@@ -124,6 +124,7 @@ class HomePage(Page):
     open_row = Signal(object)
     open_georef = Signal()
     open_models = Signal()
+    open_measure = Signal()
     CRUMB = "Home"
     TITLE = "Welcome"
 
@@ -145,7 +146,11 @@ class HomePage(Page):
                       "Raise a river or the sea on a terrain model, or test a steep slope and see how far a "
                       "landslide could run.", "Open terrain model")
         t3.button.clicked.connect(self.open_models.emit)
-        for t in (t1, t2, t3):
+        t4 = ToolCard("measure", "Measure & earthworks",
+                      "Measure heights, paths, areas and volumes on a drone map: stockpiles, lots to level, "
+                      "how much soil to dig or fill.", "Open drone map")
+        t4.button.clicked.connect(self.open_measure.emit)
+        for t in (t1, t2, t3, t4):
             tiles.addWidget(t, 1)
         self.root.addLayout(tiles)
         from .jobs_page import JobsTable
