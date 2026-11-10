@@ -58,9 +58,26 @@ def main(argv=None) -> int:
     g.add_argument("--formats", default="gtiff", help="comma list: gtiff,png,jpeg,kmz")
     g.add_argument("--classes", choices=["mgb_flood", "mgb_landslide"], help="also extract hazard polygons")
     g.add_argument("--out", help="output folder (default: next to the image)")
+    pl = sub.add_parser("plan", help="recalculate a saved earthworks plan (.plan.json) and write its report and files")
+    pl.add_argument("plan")
+    pl.add_argument("--out", help="output folder (default: next to the plan)")
+    pl.add_argument("--crs", help="coordinate system for the files (default: the drone map's)")
+    pl.add_argument("--formats", default="gpkg,kml,dxf", help="GIS formats: gpkg,shp,geojson,kml,dxf")
+    pl.add_argument("--prepared-by", default="")
+    pl.add_argument("--location", default="")
+    m3 = sub.add_parser("model3d", help="3-D model of a processed drone job for SketchUp (.dae) / STL")
+    m3.add_argument("job", help="drone mapping job folder")
+    m3.add_argument("--kind", choices=["photo", "ground"], default="photo")
+    m3.add_argument("--detail", choices=["light", "normal", "detailed"], default="normal")
+    m3.add_argument("--formats", default="dae", help="dae,stl")
+    m3.add_argument("--out", help="output folder (default: <job>/3D)")
     a = ap.parse_args(argv)
     if a.cmd == "georef":
         return _georef(a)
+    if a.cmd == "plan":
+        return _plan(a)
+    if a.cmd == "model3d":
+        return _model3d(a)
 
     st = Settings.load()
     if a.cmd == "engine":
@@ -135,6 +152,65 @@ def _georef(a) -> int:
         for k, v in info["class_areas_ha"].items():
             print(f"  {k}: {v:,.1f} ha")
     print(f"{len(files)} files written to {out}")
+    return 0
+
+
+
+
+def _job_for_plan(plan_path: str, plan: dict):
+    jd = plan.get("job_dir", "")
+    if not jobs.Job.is_job_dir(jd):
+        jd = os.path.dirname(os.path.dirname(os.path.abspath(plan_path)))
+    if not jobs.Job.is_job_dir(jd):
+        raise ValueError("The drone mapping job of this plan was not found.")
+    return jobs.Job.load(jd)
+
+
+def _plan(a) -> int:
+    from .core import earthworks as ew, earthworks_report as er, road_report as rr
+    try:
+        plan = ew.load_plan(a.plan)
+        job = _job_for_plan(a.plan, plan)
+    except (OSError, ValueError) as e:
+        print("ERROR:", e, file=sys.stderr)
+        return 1
+    files = job.summary.get("files", {})
+    dem = files.get(plan.get("source", "dtm")) or files.get("dtm") or files.get("dsm")
+    if not dem or not os.path.exists(dem):
+        print("ERROR: the job has no elevation model.", file=sys.stderr)
+        return 1
+    import rasterio
+    with rasterio.open(dem) as ds:
+        epsg = ds.crs.to_epsg()
+    crs = a.crs or (f"EPSG:{epsg}" if epsg else "EPSG:4326")
+    out = a.out or os.path.join(os.path.dirname(os.path.abspath(a.plan)), ew.safe(plan["name"]))
+    print(f"{ew.TYPES[plan['type']]}: {plan['name']}  (drone map: {job.name})")
+    t = ew.run_plan(plan, dem)
+    print(t.headline())
+    print(t.haul.sentence())
+    fmts = [f.strip() for f in a.formats.split(",") if f.strip()]
+    info = {"project": plan["name"], "location": a.location, "prepared_by": a.prepared_by}
+    if plan["type"] == "road":
+        for title, text in t.warnings:
+            print(f"WARNING {title}: {text}")
+        written = rr.export_road(t, plan, dem, files.get("ortho"), out, crs, info, job, fmts)
+    else:
+        written = er.export_package(t, plan, dem, files.get("ortho"), out, crs, info, job, fmts)
+    print(f"{len(written)} files written to {out}")
+    return 0
+
+
+def _model3d(a) -> int:
+    from .core import model3d
+    if not jobs.Job.is_job_dir(a.job):
+        print("ERROR: not a drone mapping job folder (no job.json).", file=sys.stderr)
+        return 1
+    job = jobs.Job.load(a.job)
+    files = {k: v for k, v in job.summary.get("files", {}).items() if v and os.path.exists(v)}
+    out = a.out or os.path.join(job.job_dir, "3D")
+    fm = [f.strip() for f in a.formats.split(",") if f.strip()]
+    written = model3d.export_model(files, a.kind, out, job.name, detail=a.detail, formats=fm)
+    print(f"{len(written)} files written to {out}")
     return 0
 
 

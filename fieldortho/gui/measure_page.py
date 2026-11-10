@@ -7,7 +7,8 @@ import os
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QGridLayout,
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+                               QGridLayout,
                                QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
                                QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
@@ -32,9 +33,12 @@ TOOLS = [  # key, button text, title, instruction
      "Click around the area. Double-click (or press Enter) to close the outline."),
     ("volume", "Volume", "Volume (cut and fill)",
      "Click around a pile, a hole or a lot to level. Double-click (or press Enter) to close the outline."),
+    ("compare", "Compare", "Change between two surveys",
+     "Choose the other survey below, then click around the area that changed (a quarry, a stockpile, a landslide, "
+     "a construction site). Double-click (or press Enter) to close the outline."),
 ]
 TOOL = {t[0]: t for t in TOOLS}
-NEEDS = {"point": 1, "height": 2, "path": 2, "area": 3, "volume": 3, "plan": 3}
+NEEDS = {"point": 1, "height": 2, "path": 2, "area": 3, "volume": 3, "plan": 3, "compare": 3}
 SHAPE = "#F5B841"          # amber, the logo colour: stands out on photos and relief
 SAVED = "#1F3F77"
 
@@ -174,12 +178,18 @@ class MeasurePage(Page):
         self.bg.currentIndexChanged.connect(lambda _i: self._show_background())
         self.cont_cb = QCheckBox("Contours")
         self.cont_cb.toggled.connect(lambda _v: self._draw())
-        extra += [14, QLabel("Show"), self.bg, self.cont_cb]
         self.canvas = MapCanvas()
         self.canvas.clicked.connect(self._click)
         self.canvas.double_clicked.connect(self._dclick)
         self.canvas.moved.connect(self._move)
         ll.addWidget(map_card(self.canvas, extra), 1)
+        show = QHBoxLayout()
+        show.setContentsMargins(4, 0, 4, 0)
+        show.addWidget(QLabel("Background"))
+        show.addWidget(self.bg)
+        show.addWidget(self.cont_cb)
+        show.addStretch(1)
+        ll.addLayout(show)
         self.readout = label("Choose a processed drone job above.", "Muted")
         from .road_widgets import RoadProfileView
         self.road_profile = RoadProfileView()
@@ -215,6 +225,7 @@ class MeasurePage(Page):
         self.overlay = None
         self.road_res = None
         self.road_sel = 0
+        self.preview_al = None
         self.saved: list[ms.Measurement] = []
         self.task = None
         self.rerun = QTimer(self)
@@ -332,6 +343,29 @@ class MeasurePage(Page):
         vb.addLayout(tr)
         lay.addWidget(self.vol_box)
 
+        self.cmp_box = QWidget()
+        cb = QVBoxLayout(self.cmp_box)
+        cb.setContentsMargins(0, 4, 0, 0)
+        cb.setSpacing(4)
+        cb.addWidget(label("Compare this map with", "H2"))
+        self.cmp_job = QComboBox()
+        self.cmp_job.currentIndexChanged.connect(lambda _i: self._ref_changed())
+        cb.addWidget(self.cmp_job)
+        self.cmp_order = QComboBox()
+        self.cmp_order.addItem("This map is the later survey (after)", "later")
+        self.cmp_order.addItem("This map is the earlier survey (before)", "earlier")
+        self.cmp_order.currentIndexChanged.connect(lambda _i: self._ref_changed())
+        cb.addWidget(self.cmp_order)
+        self.cmp_lineup = QCheckBox("Line up the heights on the ground around the area")
+        self.cmp_lineup.setChecked(True)
+        self.cmp_lineup.toggled.connect(lambda _v: self._ref_changed())
+        cb.addWidget(self.cmp_lineup)
+        cb.addWidget(label("Flights without ground control points can sit a metre or more apart in height. The app "
+                           "shifts the later survey so the untouched ground 3\u201315 m around your outline matches. "
+                           "Keep the outline a few metres away from other changes.", "Hint", wrap=True))
+        self.cmp_box.setVisible(False)
+        lay.addWidget(self.cmp_box)
+
         self.results = QVBoxLayout()
         self.results.setSpacing(8)
         lay.addLayout(self.results)
@@ -352,13 +386,20 @@ class MeasurePage(Page):
         db = QPushButton("Delete")
         db.setObjectName("Danger")
         db.clicked.connect(self._delete_saved)
-        eb = QPushButton("Export saved…")
+        eb = QPushButton("Export saved\u2026")
         eb.clicked.connect(self._export)
+        self.m3d_btn = QPushButton("3D model for SketchUp\u2026")
+        self.m3d_btn.setToolTip("Collada (.dae) with the drone photo, or the bare ground; STL for 3-D printing.")
+        self.m3d_btn.clicked.connect(self._export_3d)
         for b in (sb, db):
             row.addWidget(b)
         row.addStretch(1)
         row.addWidget(eb)
         lay.addLayout(row)
+        row3 = QHBoxLayout()
+        row3.addStretch(1)
+        row3.addWidget(self.m3d_btn)
+        lay.addLayout(row3)
         lay.addStretch(1)
         lay.addWidget(label("Measurements from a drone map are for planning and estimates. Without ground control "
                             "points, heights can be off by a few metres overall, but differences in height (and so "
@@ -528,17 +569,27 @@ class MeasurePage(Page):
             if m.kind == "point":
                 self.canvas.add_marker(*px[0], m.name, SAVED, 5)
             else:
-                self.canvas.add_polyline(px, SAVED, 1.6, closed=m.kind in ("area", "volume"), style=Qt.DashLine)
+                self.canvas.add_polyline(px, SAVED, 1.6, closed=m.kind in ("area", "volume", "compare"),
+                                         style=Qt.DashLine)
                 self.canvas.add_marker(*px[0], m.name, SAVED, 3)
         if not self.pts:
             return
         kind = self.kind()
         px = [self._px(*p) for p in self.pts]
-        closed = kind in ("area", "volume", "plan") and self.finished and not self.road_line_kind()
+        closed = kind in ("area", "volume", "plan", "compare") and self.finished and not self.road_line_kind()
         if self.road_res is not None and self.mode == "plan":
             self._draw_road()
         fill = (245, 184, 65, 45) if closed and self.overlay is None else None
-        if len(px) >= 2:
+        curved = None
+        if self.road_line_kind() and self.mode == "plan":
+            if self.road_res is not None and self.road_res.centre is not None:
+                curved = self.road_res.centre
+            elif self.preview_al is not None and self.preview_al.curves:
+                curved, _ = self.preview_al.densify(1.0)
+        if curved is not None:
+            self.canvas.add_polyline(px, "#9AA5BB", 1.0, style=Qt.DashLine)        # the clicked straight lines
+            self.canvas.add_polyline([self._px(*q) for q in curved], SHAPE, 2.6)
+        elif len(px) >= 2:
             self.canvas.add_polyline(px, SHAPE, 2.6, closed=closed, fill=fill)
         names = ["A", "B"] if kind == "height" else [""] * len(px)
         for (x, y), n in zip(px, names):
@@ -597,6 +648,10 @@ class MeasurePage(Page):
     def _needs(self, kind):
         return 2 if self.road_line_kind() else NEEDS[kind]
 
+    def show_alignment(self, al):
+        self.preview_al = al
+        self._draw()
+
     def show_road(self, r):
         self.road_res = r
         self.road_profile.set_result(r)
@@ -652,6 +707,9 @@ class MeasurePage(Page):
         self.tool_title.setText(title)
         self.tool_hint.setText(hint)
         self.vol_box.setVisible(key == "volume")
+        self.cmp_box.setVisible(key == "compare")
+        if key == "compare":
+            self._fill_compare_jobs()
         self.finish_btn.setVisible(key in ("path", "area", "volume"))
         self.canvas.set_pick_cursor(True)
         self._clear()
@@ -736,6 +794,7 @@ class MeasurePage(Page):
             self.canvas.set_overlay(None)
         self.road_res = None
         self.road_sel = 0
+        self.preview_al = None
         if hasattr(self, "road_profile"):
             self.road_profile.setVisible(False)
 
@@ -746,13 +805,38 @@ class MeasurePage(Page):
         if getattr(self, "plan", None) is not None and self.mode == "plan":
             self.plan.shape_changed()
 
+    def _fill_compare_jobs(self):
+        cur = self.cmp_job.currentData()
+        self.cmp_job.blockSignals(True)
+        self.cmp_job.clear()
+        for i in range(self.source.count()):
+            d = self.source.itemData(i)
+            if d and (self.job is None or os.path.normcase(d) != os.path.normcase(self.job.job_dir)):
+                self.cmp_job.addItem(self.source.itemText(i), d)
+        if self.cmp_job.count() == 0:
+            self.cmp_job.addItem("\u2013 no other processed drone map \u2013", None)
+        i = self.cmp_job.findData(cur)
+        self.cmp_job.setCurrentIndex(max(0, i))
+        self.cmp_job.blockSignals(False)
+
+    def _other_dem(self) -> str | None:
+        d = self.cmp_job.currentData()
+        if not d:
+            return None
+        try:
+            files = jobs.Job.load(d).summary.get("files", {})
+        except Exception:
+            return None
+        k = self.src_kind.currentData()
+        return files.get(k) or files.get("dtm") or files.get("dsm")
+
     def _ref_changed(self):
         if self.ref_group.checkedButton().property("ref") == "level" and self.result is not None \
                 and self.level.value() == 0 and isinstance(self.result, ms.VolumeResult):
             self.level.blockSignals(True)
             self.level.setValue(round(self.result.z_mean, 2))
             self.level.blockSignals(False)
-        if self.finished and self.kind() == "volume":
+        if self.finished and self.kind() in ("volume", "compare"):
             self.rerun.start()
 
     # ================================================================ compute
@@ -773,7 +857,17 @@ class MeasurePage(Page):
             self.level.blockSignals(False)
             level = self.level.value()
 
+        other = self._other_dem() if kind == "compare" else None
+        if kind == "compare" and not other:
+            self._failed("Choose another processed drone map of the same place to compare with.")
+            return
+        later_here = self.cmp_order.currentData() == "later"
+        line_up = self.cmp_lineup.isChecked()
+
         def work(_t):
+            if kind == "compare":
+                return ms.compare_surveys(other if later_here else path, path if later_here else other, pts,
+                                          line_up)
             if kind == "point":
                 return ms.point_elevation(path, *pts[0])
             if kind == "height":
@@ -805,6 +899,10 @@ class MeasurePage(Page):
         self.result, self.result_kind = res, kind
         if isinstance(res, ms.VolumeResult) and res.dz is not None:
             self.overlay = self._overlay_for(res)
+            self.canvas.set_overlay(self.overlay)
+        if isinstance(res, ms.CompareResult):
+            from types import SimpleNamespace
+            self.overlay = self._overlay_for(SimpleNamespace(dz=-res.dz, transform=res.transform))   # red = lowered
             self.canvas.set_overlay(self.overlay)
         self._draw()
         self._show_result()
@@ -845,6 +943,29 @@ class MeasurePage(Page):
                         StatCard("Horizontal distance", fmt_m(r.horizontal), f"straight line {fmt_m(r.straight)}"),
                         StatCard("Slope", f"{abs(r.slope_pct):.1f} %", f"{abs(r.slope_deg):.1f}°"
                                  + (f" · 1 in {abs(1 / (r.slope_pct / 100)):.0f}" if r.slope_pct else ""))])
+        elif kind == "compare":
+            r = res
+            cards = [StatCard("Lowered (removed)", f"{r.lowered_m3:,.0f} m³",
+                              f"over {fmt_area(r.lowered_area)}, deepest {r.max_lower:.2f} m"),
+                     StatCard("Raised (added)", f"{r.raised_m3:,.0f} m³",
+                              f"over {fmt_area(r.raised_area)}, highest {r.max_raise:.2f} m"),
+                     StatCard("Net change", f"{r.net_m3:+,.0f} m³", "more material now" if r.net_m3 >= 0
+                              else "less material now"),
+                     StatCard("Area", fmt_area(r.area.area_2d), f"{r.area.area_2d / 1e4:.3f} ha")]
+            cards[0].t.setStyleSheet("color: #9C2A22;")
+            cards[1].t.setStyleSheet("color: #1E4E86;")
+            self._grid(cards)
+            if self.cmp_lineup.isChecked():
+                self.results.addWidget(label(f"The later survey was shifted {-r.offset:+.2f} m to line up with the "
+                                             f"earlier one on {r.offset_points:,} cells of ground around the area.",
+                                             "Hint", wrap=True))
+                if abs(r.offset) > 3:
+                    self.results.addWidget(IssueBox("warning", "Large height difference between the surveys",
+                                                    f"The two maps differ by {r.offset:.1f} m overall. Check that "
+                                                    "they show the same place and the same kind of model."))
+            self.results.addWidget(label("Red on the map = ground lower now (dug, eroded, hauled away); blue = "
+                                         "higher now (filled, piled, deposited).", "Hint", wrap=True))
+            self._gaps(r.no_data_pct)
         elif kind == "path":
             r = res
             self._grid([StatCard("Length", fmt_m(r.length_2d, 1), "flat, as on a map"),
@@ -924,11 +1045,17 @@ class MeasurePage(Page):
         if not ok or not name.strip():
             return
         settings = {}
+        if kind == "compare":
+            settings = {"compared_with": self.cmp_job.currentText(), "this_map_is": self.cmp_order.currentData(),
+                        "line_up": self.cmp_lineup.isChecked()}
         if kind == "volume":
             settings = {"reference": self.result.reference, "level": self.level.value(),
                         "swell_pct": self.swell.value()}
+        res_d = ms.results_dict(kind, self.result, self.swell.value())
+        if kind == "compare":
+            res_d["compared_with"] = self.cmp_job.currentText()
         m = ms.Measurement(kind, name.strip(), [list(p) for p in self.pts], self.src_kind.currentData(), settings,
-                           ms.results_dict(kind, self.result, self.swell.value()))
+                           res_d)
         self.saved.append(m)
         self._persist()
         self._draw()
@@ -991,6 +1118,43 @@ class MeasurePage(Page):
         self._persist()
         self._draw()
 
+    def _export_3d(self):
+        if self.job is None:
+            return
+        opts = _model3d_dialog(self)
+        if not opts:
+            return
+        from shapely.geometry import Polygon
+        from PySide6.QtWidgets import QProgressDialog
+        from ..core import model3d
+        poly = Polygon(self.pts) if opts["shape"] else None
+        bounds = poly.bounds if poly is not None else None
+        result = {}
+        files, name = dict(self.files), self.job.name
+
+        def work(tk):
+            try:
+                result["files"] = model3d.export_model(files, opts["kind"], opts["folder"], name, bounds, poly,
+                                                       opts["detail"], opts["formats"], progress=tk.report)
+            except Exception as e:  # shown below
+                result["error"] = str(e) or e.__class__.__name__
+        dlg = QProgressDialog("Making the 3D model\u2026", None, 0, 100, self)
+        dlg.setWindowTitle("3D model")
+        dlg.setMinimumDuration(0)
+        task = Task(work, self)
+        task.progress.connect(lambda pc, tx: (dlg.setValue(int(pc)), dlg.setLabelText(tx)))
+        task.finished.connect(dlg.close)
+        self._m3d_task = task
+        task.start()
+        dlg.exec()
+        task.wait()
+        if "error" in result:
+            QMessageBox.warning(self, "3D model failed", result["error"])
+            return
+        if QMessageBox.question(self, "3D model ready", f"{len(result.get('files', []))} files written to:\n"
+                                f"{opts['folder']}\n\nOpen the folder?") == QMessageBox.Yes:
+            system.open_path(opts["folder"])
+
     def _export(self):
         if not self.saved:
             QMessageBox.information(self, "Nothing to export", "Save at least one measurement first.")
@@ -1016,3 +1180,60 @@ class MeasurePage(Page):
         if QMessageBox.question(self, "Export finished", f"{len(files)} files written (including a CSV table)."
                                 "\n\nOpen the folder?") == QMessageBox.Yes:
             system.open_path(d.folder.path())
+
+
+def _model3d_dialog(page):
+    """Ask what 3-D model to make. Returns a dict or None."""
+    from PySide6.QtWidgets import QDialog, QDialogButtonBox
+    from .export_widgets import FolderPicker
+    d = QDialog(page)
+    d.setWindowTitle("3D model for SketchUp")
+    d.setMinimumWidth(560)
+    v = QVBoxLayout(d)
+    v.addWidget(label("Which model?", "H2"))
+    photo = QRadioButton("Photo model: looks like the site (surface with trees and buildings, drone photo on top)")
+    ground = QRadioButton("Clean ground model: bare ground, smooth and light \u2013 good to design on")
+    photo.setChecked("ortho" in page.files and "dsm" in page.files)
+    ground.setChecked(not photo.isChecked())
+    photo.setEnabled("dsm" in page.files or "dtm" in page.files)
+    ground.setEnabled("dtm" in page.files or "dsm" in page.files)
+    for w_ in (photo, ground):
+        v.addWidget(w_)
+    v.addWidget(label("Which area?", "H2"))
+    whole = QRadioButton("The whole drone map")
+    shape = QRadioButton("Only inside the outline drawn on the map")
+    has_shape = page.finished and len(page.pts) >= 3 and not page.road_line_kind() and page.kind() not in (
+        "point", "height", "path")
+    shape.setEnabled(has_shape)
+    (shape if has_shape else whole).setChecked(True)
+    v.addWidget(whole)
+    v.addWidget(shape)
+    row = QHBoxLayout()
+    row.addWidget(QLabel("Detail"))
+    det = QComboBox()
+    det.addItem("Light (about 100,000 triangles): fast in SketchUp", "light")
+    det.addItem("Normal (about 300,000 triangles)", "normal")
+    det.addItem("Detailed (about 800,000 triangles): needs a strong computer", "detailed")
+    det.setCurrentIndex(1)
+    row.addWidget(det, 1)
+    v.addLayout(row)
+    dae = QCheckBox("Collada .dae for SketchUp (File \u2192 Import), with the photo")
+    dae.setChecked(True)
+    stl = QCheckBox("STL (no photo; for 3-D printing and other programs)")
+    v.addWidget(dae)
+    v.addWidget(stl)
+    v.addWidget(label("Save to folder", "H2"))
+    folder = FolderPicker(os.path.join(page.job.job_dir, "3D"))
+    v.addWidget(folder)
+    bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    bb.button(QDialogButtonBox.Ok).setText("Make the 3D model")
+    bb.accepted.connect(d.accept)
+    bb.rejected.connect(d.reject)
+    v.addWidget(bb)
+    if not d.exec():
+        return None
+    fm = [f for f, cbx in (("dae", dae), ("stl", stl)) if cbx.isChecked()]
+    if not fm:
+        return None
+    return {"kind": "photo" if photo.isChecked() else "ground", "shape": shape.isChecked(),
+            "detail": det.currentData(), "formats": fm, "folder": folder.path()}

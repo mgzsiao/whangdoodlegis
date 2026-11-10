@@ -18,7 +18,8 @@ ROAD_NOTES = (
     "Volumes between stations use the average end-area method: the dig and fill areas of two neighbouring "
     "cross-sections are averaged and multiplied by the distance between them. Closer stations follow the ground "
     "more closely.",
-    "This version uses straight segments between the points clicked; bends are not rounded into curves.",
+    "On curves the average end-area method is used without a curvature correction; the error is small unless the "
+    "cut or fill is much larger on one side of a tight curve.",
 ) + er.EARTHWORKS_NOTES
 
 
@@ -42,6 +43,52 @@ def quantities(r: rdm.RoadResult) -> list[tuple[str, str, str]]:
     rows.append(("Truck trips", "  ·  ".join(f"{n:,}" for _s, n in h.trips),
                  "  ·  ".join(f"{s:g} m³ truck" for s, _n in h.trips)))
     return rows
+
+
+def mass_haul_image(r: rdm.RoadResult, width=1800, height=520) -> Image.Image:
+    """Running balance of earth along the road: rising = more dug than filled so far."""
+    im = Image.new("RGB", (width, height), "white")
+    dr = ImageDraw.Draw(im)
+    sd = np.array([s.s for s in r.stations])
+    m = np.array([s.mass for s in r.stations])
+    lo, hi = min(0.0, float(m.min())), max(0.0, float(m.max()))
+    pad = max(1.0, (hi - lo) * 0.12)
+    lo, hi = lo - pad, hi + pad
+    L, R, T, B = 140, 30, 70, 70
+    pw, ph = width - L - R, height - T - B
+    dmax = float(sd[-1]) or 1.0
+
+    def P(a, b):
+        return (L + a / dmax * pw, T + (hi - b) / (hi - lo) * ph)
+    f, fb = _font(22), _font(24, True)
+    for k in range(6):
+        v = lo + (hi - lo) * k / 5
+        y = P(0, v)[1]
+        dr.line([(L, y), (L + pw, y)], fill=(225, 229, 236))
+        dr.text((8, y - 12), f"{v:,.0f} m³", font=f, fill=MUTED)
+    step = ms_nice(dmax / 8)
+    x = 0.0
+    while x <= dmax + 1e-9:
+        X = P(x, lo)[0]
+        dr.text((X - 32, T + ph + 10), rdm.station_label(x), font=f, fill=MUTED)
+        x += step
+    y0 = P(0, 0)[1]
+    dr.line([(L, y0), (L + pw, y0)], fill=INK, width=2)
+    pts = [P(a, b) for a, b in zip(sd, m)]
+    for (xa, ya), (xb, yb), mb in zip(pts[:-1], pts[1:], m[1:]):
+        col = CUT_RGB if mb >= 0 else FILL_RGB
+        dr.polygon([(xa, y0), (xa, ya), (xb, yb), (xb, y0)], fill=tuple(int(c * 0.3 + 255 * 0.7) for c in col))
+    dr.line(pts, fill=NAVY, width=4)
+    for i in range(1, len(m)):                      # balance points: dug soil = soil needed so far
+        if (m[i - 1] > 0) != (m[i] > 0) and m[i - 1] != m[i]:
+            sx = sd[i - 1] + (sd[i] - sd[i - 1]) * m[i - 1] / (m[i - 1] - m[i])
+            X, Y = P(sx, 0)
+            dr.ellipse([X - 7, Y - 7, X + 7, Y + 7], outline=INK, width=3)
+            dr.text((X - 40, Y + 10), rdm.station_label(sx), font=f, fill=INK)
+    dr.text((L, 16), "Earth balance along the road (mass haul)", font=fb, fill=INK)
+    dr.text((width - 900, 18), "above zero: more dug than needed so far · circles: balance points",
+            font=f, fill=MUTED)
+    return im
 
 
 def station_rows(r: rdm.RoadResult) -> list[tuple]:
@@ -259,7 +306,7 @@ def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max
     d = ImageDraw.Draw(im)
     W = im.width
     lw = max(3, W // 450)
-    line = [px(*p) for p in pts]
+    line = [px(*p) for p in (r.centre if r.centre is not None else pts)]
     d.line(line, fill=INK, width=lw + 2)
     d.line(line, fill=AMBER, width=lw)
     f = _font(max(16, W // 60), True)
@@ -302,7 +349,7 @@ def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max
 
 
 # ============================================================================ files
-def write_workbook(path, title, meta, q, inp, stations, sections, notes):
+def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=()):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     wb = Workbook()
@@ -331,6 +378,8 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes):
     table(wst, STATION_HEADER, stations, 1, [11, 12, 14, 14, 11, 11, 14, 12, 12, 13, 13, 13, 13, 14, 8])
     wst.freeze_panes = "B2"
     wst.row_dimensions[1].height = 45
+    if curves:
+        table(wb.create_sheet("Curves"), rdm.CURVE_HEADER, curves, 1, [8, 15, 15, 13, 11, 13, 14, 13, 16, 15, 15, 8])
     wsx = wb.create_sheet("Cross-sections")
     table(wsx, ("Station", "Offset (m, + right)", "Ground (m)", "Design (m)"), sections, 1, [11, 18, 12, 12])
     wsx.freeze_panes = "A2"
@@ -342,7 +391,8 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes):
     return path
 
 
-def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map_size, n_sections) -> str:
+def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map_size, n_sections,
+                curves=()) -> str:
     h = r.haul
     big = [("Dig (cut)", f"{r.cut:,.0f} m³"), ("Fill", f"{r.fill:,.0f} m³"), ("Length", f"{r.length:,.0f} m"),
            ("Steepest", f"{r.steepest:.1f} %")]
@@ -362,6 +412,7 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
                     "the shoulder: the real volume there is larger.")
     if r.no_data:
         warn.append(f"{r.no_data} station(s) are off the drone map or in a gap; their heights were estimated.")
+    warn += [f"{t}: {x}" for t, x in r.warnings]
     for wt in warn:
         parts.append(f'<p style="background:#FFF4E0; color:#9A5B00; padding:6px;">⚠ {html.escape(wt)}</p>')
     mw, mh = map_size
@@ -372,7 +423,19 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
               '<p style="color:#5D677A; font-size:8pt;">The strip shows the ground worked, from where the sides meet '
               'the ground on the left to the right. Red = mostly dig, blue = mostly fill.</p>',
               f"{H2}Side view</h2>", '<p><img src="profile.png" width="520" height="179"></p>',
-              '<h2 style="font-size:12pt; page-break-before: always;">Stations</h2>']
+              f"{H2}Earth balance (mass haul)</h2>", '<p><img src="mass.png" width="520" height="150"></p>',
+              '<p style="color:#5D677A; font-size:8pt;">Where the line rises, more soil is dug than the fill needs so '
+              'far; where it falls, fill uses up soil. Between two balance points (circles) the dug soil can be '
+              'moved to the fill without hauling in or out.</p>']
+    if curves:
+        parts.append('<h2 style="font-size:12pt; page-break-before: always;">Curves</h2>')
+        parts.append(er._table([(c[0], c[3], c[4], c[5], c[6], c[9], c[10], c[11]) for c in curves],
+                               ("8%", "14%", "12%", "12%", "14%", "14%", "14%", "12%"),
+                               header=("No.", "Deflection °", "Radius m", "Tangent m", "Length m", "Start (PC)",
+                                       "End (PT)", "Turns")))
+        parts.append(f"{H2}Stations</h2>")
+    else:
+        parts.append('<h2 style="font-size:12pt; page-break-before: always;">Stations</h2>')
     rows = [(x[0], x[4] if x[4] is not None else "-", x[5], x[6] if x[6] is not None else "-", x[7], x[8],
              x[9], x[10], x[13]) for x in station_rows(r)]
     hdr = ("Station", "Ground m", "Road m", "Dig+/Fill− m", "Dig m²", "Fill m²", "Dig m³", "Fill m³", "Balance m³")
@@ -392,7 +455,11 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
         parts.append(er._table([(os.path.basename(f), er.FILE_NOTES.get(os.path.splitext(f)[1].lower(), ""))
                                 for f in files], ("50%", "50%")))
     parts.append(f"{H2}Notes and disclaimer</h2>")
-    for p in ROAD_NOTES + DISCLAIMER_PARAGRAPHS:
+    notes = list(ROAD_NOTES)
+    if r.standard in rdm.STANDARDS:
+        notes.insert(0, f"Road standard: {rdm.STANDARDS[r.standard]['label']}, from {rdm.DPWH_SOURCE}: "
+                        + rdm.STANDARD_NOTES + " Design speed: " + rdm.STANDARDS[r.standard]["speed"] + ".")
+    for p in notes + list(DISCLAIMER_PARAGRAPHS):
         parts.append(f'<p style="font-size:8pt; color:#5D677A;">{html.escape(p)}</p>')
     return "".join(parts)
 
@@ -430,6 +497,7 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
             strips.append(ex.Feature(poly, {"from": a.label, "to": b.label, "cut_m3": round(b.cut_vol, 2),
                                             "fill_m3": round(b.fill_vol, 2),
                                             "type": "dig" if b.cut_vol >= b.fill_vol else "fill"}))
+    centre[0] = ex.Feature(LineString([tuple(p) for p in r.centre]), centre[0].properties)
     edges = [ex.Feature(LineString([s.catch_xy(k) for s in st]), {"side": "left" if k < 0 else "right"})
              for k in (-1, 1)]
     xs = [ex.Feature(LineString([s.catch_xy(-1), s.catch_xy(1)]), {"station": s.label}) for s in st]
@@ -445,8 +513,15 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
                                          else None, append=(fmt == "gpkg"))
     progress(35, "Tables")
     srows, xrows = station_rows(r), section_rows(r)
+    crows = rdm.curve_rows(r.alignment) if r.alignment is not None else []
     notes = list(ROAD_NOTES + DISCLAIMER_PARAGRAPHS)
-    files.append(write_workbook(base + "_quantities.xlsx", title, meta, q, inp, srows, xrows, notes))
+    files.append(write_workbook(base + "_quantities.xlsx", title, meta, q, inp, srows, xrows, notes, crows))
+    if crows:
+        files.append(er.write_csv(base + "_curves.csv", rdm.CURVE_HEADER, crows))
+    progress(45, "Civil 3D (LandXML) and CAD drawing")
+    from . import cad, landxml
+    files.append(landxml.road_xml(base + "_civil3d.xml", r, plan.get("name", "Road"), dem_path))
+    files.append(cad.road_dxf(base + "_drawing.dxf", r, plan.get("name", "Road")))
     files.append(er.write_csv(base + "_stations.csv", STATION_HEADER, srows))
     files.append(er.write_csv(base + "_cross_sections.csv", ("Station", "Offset_m", "Ground_m", "Design_m"), xrows))
     files.append(er.write_csv(base + "_quantities.csv", ("Quantity", "Value", "Note"), q))
@@ -456,18 +531,20 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     progress(55, "Pictures")
     mimg = map_image(r, pts, dem_path, ortho_path)
     pimg = profile_image(r)
+    himg = mass_haul_image(r)
     sheets = sections_sheets(r)
     mimg.save(base + "_map.png")
     pimg.save(base + "_side_view.png")
-    files += [base + "_map.png", base + "_side_view.png"]
+    himg.save(base + "_mass_haul.png")
+    files += [base + "_map.png", base + "_side_view.png", base + "_mass_haul.png"]
     readme = base + "_README.txt"
     pdf = base + "_report.pdf"
     listed = [f for f in dict.fromkeys([pdf] + files + [readme])
               if not f.lower().endswith((".aux.xml", ".pgw", ".wld", ".jgw", ".tfw"))]
     progress(75, "PDF report")
-    images = {"map.png": mimg, "profile.png": pimg}
+    images = {"map.png": mimg, "profile.png": pimg, "mass.png": himg}
     images.update({f"sections{k}.png": im for k, im in enumerate(sheets)})
-    er.write_pdf(pdf, report_html(r, plan, meta, q, inp, quality, listed, mimg.size, len(sheets)), images)
+    er.write_pdf(pdf, report_html(r, plan, meta, q, inp, quality, listed, mimg.size, len(sheets), crows), images)
     files.insert(0, pdf)
     rn = list(ROAD_NOTES)
     for fmt in gis_formats:

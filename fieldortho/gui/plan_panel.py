@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDia
                                QMessageBox, QPlainTextEdit, QProgressBar, QProgressDialog, QPushButton, QRadioButton,
                                QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
 
-from ..core import activity, crs as crsmod, earthworks as ew, measure as ms, road as rdm, system
+from ..core import activity, alignment as alm, crs as crsmod, earthworks as ew, measure as ms, road as rdm, system
 from ..core.settings import config_dir
 from . import theme
 from .export_widgets import CrsPicker, FolderPicker, FormatChecks
@@ -183,12 +183,13 @@ class PlanPanel(QWidget):
     STEPS = {
         "pad": ["type", "draw", "height", "edges", "soil", "result"],
         "pile": ["type", "draw", "ref", "soil", "result"],
-        "road": ["type", "draw", "stations", "rise", "shape", "soil", "result"],
+        "road": ["type", "draw", "curves", "stations", "rise", "shape", "soil", "result"],
     }
     TITLES = {"type": "What are you planning?", "draw": "Draw the area", "height": "How high should the ground be?",
               "edges": "What happens at the edges?", "ref": "Measure from what?", "soil": "Soil and trucks",
               "result": "Results", "stations": "How often should we check the ground?",
-              "rise": "How high should the road be?", "shape": "What does the road look like across?"}
+              "rise": "How high should the road be?", "shape": "What does the road look like across?",
+              "curves": "Smooth the bends?"}
 
     def __init__(self, page):
         super().__init__()
@@ -231,7 +232,8 @@ class PlanPanel(QWidget):
         self.stack = QStackedWidget()
         self.pages = {}
         for key, fn in (("type", self._p_type), ("draw", self._p_draw), ("height", self._p_height),
-                        ("edges", self._p_edges), ("ref", self._p_ref), ("stations", self._p_stations),
+                        ("edges", self._p_edges), ("ref", self._p_ref), ("curves", self._p_curves),
+                        ("stations", self._p_stations),
                         ("rise", self._p_rise), ("shape", self._p_shape), ("soil", self._p_soil),
                         ("result", self._p_result)):
             pw = QWidget()
@@ -419,6 +421,118 @@ class PlanPanel(QWidget):
         lay.addLayout(self.dsm_box)
 
     # ---- road pages
+    TIGHT = (("gentle", "Gentle curves", 60.0, "for faster vehicles; needs more room"),
+             ("normal", "Normal curves", 30.0, "the DPWH minimum for farm-to-market roads"),
+             ("tight", "Tight curves", 15.0, "slow traffic, mountain roads"),
+             ("none", "No curves", 0.0, "keep the sharp bends as drawn"))
+
+    def _p_curves(self, lay):
+        lay.addWidget(label("At each bend the road can turn along a smooth curve (an arc of a circle) instead of a "
+                            "sharp corner. A bigger radius is a gentler curve.", "", wrap=True))
+        self.tgroup = QButtonGroup(self)
+        for key, title, r, text in self.TIGHT:
+            rb = radio_block(self.tgroup, key, f"{title}" + (f" (radius {r:g} m)" if r else ""), text, lay)
+            rb.setProperty("r", r)
+            if key == "normal":
+                rb.setChecked(True)
+            rb.toggled.connect(self._tight_changed)
+        lay.addWidget(label("Each bend", "H2"))
+        self.curve_box = QVBoxLayout()
+        self.curve_box.setSpacing(4)
+        lay.addLayout(self.curve_box)
+        lay.addWidget(explain("The curve begins before the bend and ends after it. If two bends are close "
+                              "together, their curves are made smaller so they fit. Too tight a curve is hard for "
+                              "trucks; the app warns you."))
+        self.curve_rows = []
+        self._radii = {}
+
+    def _tight_r(self) -> float:
+        b = self.tgroup.checkedButton()
+        return float(b.property("r")) if b else 30.0
+
+    def _tight_changed(self, on):
+        if not on:
+            return
+        r = self._tight_r()
+        for vtx, cb, sp, _st in self.curve_rows:
+            cb.setChecked(r > 0)
+            if r > 0:
+                sp.setValue(r)
+        self._curves_changed()
+
+    def _build_curve_rows(self):
+        clear_layout(self.curve_box)
+        self.curve_rows = []
+        pts = self.page.pts
+        if len(pts) < 3:
+            self.curve_box.addWidget(label("The road line has no bends.", "Hint"))
+            self._curves_changed()
+            return
+        k = 0
+        for i, (d, left) in enumerate(alm.deflections(pts), start=1):
+            if d < 1.0:
+                continue
+            k += 1
+            w = QWidget()
+            g = QGridLayout(w)
+            g.setContentsMargins(0, 2, 0, 2)
+            g.addWidget(QLabel(f"Bend {k} (point {i + 1}): turns {'left' if left else 'right'} {d:.0f}\u00b0"),
+                        0, 0, 1, 3)
+            cb = QCheckBox("Smooth curve, radius")
+            sp = spin(3, 2000, self._radii.get(i, self._tight_r() or 30.0), " m", 0, 5, 100)
+            cb.setChecked(self._radii.get(i, self._tight_r()) > 0)
+            st = label("", "Hint", wrap=True)
+            g.addWidget(cb, 1, 0)
+            g.addWidget(sp, 1, 1)
+            g.addWidget(st, 2, 0, 1, 3)
+            g.setColumnStretch(2, 1)
+            cb.toggled.connect(lambda _v: self._curves_changed())
+            sp.valueChanged.connect(lambda _v: self._curves_changed())
+            self.curve_box.addWidget(w)
+            self.curve_rows.append((i, cb, sp, st))
+        self._curves_changed()
+
+    def curve_radii(self) -> list:
+        n = len(self.page.pts)
+        r = [0.0] * max(0, n - 2)
+        for vtx, cb, sp, _st in self.curve_rows:
+            if 1 <= vtx <= n - 2:
+                r[vtx - 1] = sp.value() if cb.isChecked() else 0.0
+        return r
+
+    def _curves_changed(self):
+        for vtx, cb, sp, _st in self.curve_rows:
+            sp.setEnabled(cb.isChecked())
+            self._radii[vtx] = sp.value() if cb.isChecked() else 0.0
+        if self.kind != "road" or len(self.page.pts) < 2:
+            return
+        try:
+            al = alm.build(self.page.pts, self.curve_radii())
+        except ValueError:
+            return
+        std = rdm.STANDARDS.get(self.r_std.currentData()) if hasattr(self, "r_std") else None
+        by_v = {c.vertex: c for c in al.curves}
+        for vtx, cb, sp, st in self.curve_rows:
+            c = by_v.get(vtx)
+            if not cb.isChecked() or c is None:
+                st.setText("Sharp bend.")
+                st.setObjectName("Hint")
+            elif c.reduced:
+                st.setText(f"\u26A0 Made smaller to fit: radius {c.radius:.0f} m (the straights next to it are short).")
+                st.setObjectName("Warn")
+            elif std and c.radius < std["min_radius"]:
+                st.setText(f"\u26A0 Tighter than the DPWH minimum of {std['min_radius']:g} m.")
+                st.setObjectName("Warn")
+            elif c.radius < rdm.VERY_TIGHT:
+                st.setText("\u26A0 Very tight: long trucks may not get around.")
+                st.setObjectName("Warn")
+            else:
+                st.setText(f"\u2714 Curve {c.length:.1f} m long, starts {c.tangent:.1f} m before the bend.")
+                st.setObjectName("Good")
+            theme.repolish(st)
+        self.page.show_alignment(al)
+        self._changed()
+
     def _p_stations(self, lay):
         lay.addWidget(label("The app measures the ground across the road at each station. Closer stations follow the "
                             "ground more closely; farther ones are quicker.", "", wrap=True))
@@ -527,6 +641,19 @@ class PlanPanel(QWidget):
         return out
 
     def _p_shape(self, lay):
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Road standard"))
+        self.r_std = QComboBox()
+        self.r_std.addItem("My own values", "")
+        for k, v in rdm.STANDARDS.items():
+            self.r_std.addItem(v["label"], k)
+        self.r_std.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.r_std.setMinimumContentsLength(16)
+        self.r_std.currentIndexChanged.connect(self._std_changed)
+        row.addWidget(self.r_std, 1)
+        lay.addLayout(row)
+        self.std_note = label("", "Hint", wrap=True)
+        lay.addWidget(self.std_note)
         self.preview = TemplatePreview()
         lay.addWidget(self.preview)
         g = QGridLayout()
@@ -588,6 +715,29 @@ class PlanPanel(QWidget):
         self.r_cut.valueChanged.connect(self._r_ratio_edited)
         self.r_fill.valueChanged.connect(self._r_ratio_edited)
 
+    def _std_changed(self, _i):
+        k = self.r_std.currentData()
+        st = rdm.STANDARDS.get(k)
+        if st:
+            for w_, key in ((self.r_width, "width"), (self.r_crown, "crown_pct"), (self.r_sh_w, "shoulder_w"),
+                            (self.r_sh_p, "shoulder_pct"), (self.r_pave, "pavement_t")):
+                w_.blockSignals(True)
+                w_.setValue(st[key])
+                w_.blockSignals(False)
+            self.r_sh.setChecked(True)
+            self.r_soil.setCurrentIndex(self.r_soil.findData("firm"))
+            self.r_cut.setValue(st["cut_ratio"])
+            self.r_fill.setValue(st["fill_ratio"])
+            self.std_note.setText(
+                f"From {rdm.DPWH_SOURCE}. Width {st['width']:g} m, concrete at least {st['pavement_t'] * 1000:.0f} mm "
+                f"(base course is not set there: add yours), shoulders {st['shoulder_w']:g} m gravel, cross slope "
+                f"1.5% (shoulders 3%), curves at least {st['min_radius']:g} m radius, grades up to "
+                f"{st['max_grade']:g}%, design speed {st['speed']}. You can still change any value; the app then "
+                "warns you where the plan is outside the standard.")
+        else:
+            self.std_note.setText("Type the values for your road. Choose a DPWH standard above to fill them in.")
+        self._shape_changed()
+
     def _shape_changed(self, *_):
         self.r_sh_w.setEnabled(self.r_sh.isChecked())
         self.r_sh_p.setEnabled(self.r_sh.isChecked())
@@ -628,7 +778,8 @@ class PlanPanel(QWidget):
             ditch=self.r_ditch.isChecked(), ditch_w=self.r_ditch_w.value(), ditch_d=self.r_ditch_d.value(),
             pavement_t=self.r_pave.value(), soil=self.r_soil.currentData(), cut_ratio=self.r_cut.value(),
             fill_ratio=self.r_fill.value(), swell_pct=self.swell.value(), shrink_pct=self.shrink.value(),
-            truck_m3=self.truck.value())
+            truck_m3=self.truck.value(), radii=self.curve_radii(), standard=self.r_std.currentData() or "",
+            min_radius=rdm.STANDARDS.get(self.r_std.currentData() or "", {}).get("min_radius", 0.0))
 
     def _p_soil(self, lay):
         g = QGridLayout()
@@ -709,7 +860,12 @@ class PlanPanel(QWidget):
     def go(self, i):
         self.idx = max(0, min(i, len(self.steps()) - 1))
         key = self.step()
+        from PySide6.QtWidgets import QSizePolicy
+        for k_, pw in self.pages.items():       # only the shown step decides the panel's width
+            pw.setSizePolicy(QSizePolicy.Preferred if k_ == key else QSizePolicy.Ignored,
+                             QSizePolicy.Preferred if k_ == key else QSizePolicy.Ignored)
         self.stack.setCurrentWidget(self.pages[key])
+        self.stack.adjustSize()
         n = len(self.steps())
         self.step_label.setText(f"{ew.TYPES[self.kind].upper()} · STEP {self.idx + 1} OF {n}")
         self.bar.setRange(0, n)
@@ -721,7 +877,7 @@ class PlanPanel(QWidget):
         nxt = self.steps()[self.idx + 1] if not last else ""
         short = {"draw": "Draw the road line" if self.kind == "road" else "Draw the area", "height": "Height",
                  "edges": "Edges", "ref": "Measure from", "soil": "Soil and trucks", "stations": "Stations",
-                 "rise": "Road height", "shape": "Road shape"}
+                 "rise": "Road height", "shape": "Road shape", "curves": "Curves"}
         self.next_btn.setText(("See the results" if nxt == "result" else f"Next: {short.get(nxt, '')}") + "  ›"
                               if nxt else "")
         if key == "draw":
@@ -732,6 +888,10 @@ class PlanPanel(QWidget):
                 "press Enter) on the last point to finish." if self.kind == "road" else
                 "Click around the area on the map, corner by corner. Double-click (or press Enter) on the last "
                 "corner to close the outline.")
+        if key == "curves":
+            self._build_curve_rows()
+        if key == "shape" and not self.std_note.text():
+            self._std_changed(0)
         if key == "stations":
             self._station_text()
         if key == "rise":
@@ -789,6 +949,9 @@ class PlanPanel(QWidget):
         if "ref" in steps:
             b = self.rgroup.checkedButton()
             lines.append("✔ Measured from: " + (b.text().lower() if b else ""))
+        if "curves" in steps:
+            n = sum(1 for r_ in self.curve_radii() if r_ > 0)
+            lines.append(f"\u2714 Curves: {n} smooth" if n else "\u2714 Curves: sharp bends")
         if "stations" in steps:
             lines.append(f"\u2714 Stations every {self.interval():g} m")
         if "rise" in steps:
@@ -798,7 +961,8 @@ class PlanPanel(QWidget):
                          ", " + (b.text().lower() if b else "") +
                          (f" ({self.max_grade.value():g}%)" if b and b.property("key") == "gentle" else ""))
         if "shape" in steps:
-            lines.append(f"\u2714 Road {self.r_width.value():g} m" +
+            std = rdm.STANDARDS.get(self.r_std.currentData() or "")
+            lines.append(f"\u2714 Road {self.r_width.value():g} m" + (" (DPWH)" if std else "") +
                          (f" + shoulders {self.r_sh_w.value():g} m" if self.r_sh.isChecked() else "") +
                          (", ditches" if self.r_ditch.isChecked() else ""))
         if "soil" in steps:
@@ -1106,7 +1270,17 @@ class PlanPanel(QWidget):
         v.addWidget(label("Hauling", "H2"))
         v.addWidget(label(r.haul.sentence(), "", wrap=True))
         self.res_box.addWidget(box)
-        if r.steepest > 12:
+        for title, text in r.warnings:
+            self.res_box.addWidget(IssueBox("warning", title, text))
+        if r.alignment is not None and r.alignment.curves:
+            self.res_box.addWidget(label("Curves: " + ", ".join(
+                f"{k}: R {c.radius:.0f} m, {c.length:.1f} m ({rdm.station_label(c.pc_s)}\u2013"
+                f"{rdm.station_label(c.pt_s)})" for k, c in enumerate(r.alignment.curves, 1)), "Hint", wrap=True))
+        mh = QCheckBox("Earth balance (mass haul) under the map")
+        mh.setChecked(self.page.road_profile.mode == "mass")
+        mh.toggled.connect(lambda on: self.page.road_profile.set_mode("mass" if on else "profile"))
+        self.res_box.addWidget(mh)
+        if r.steepest > 12 and not r.standard:
             self.res_box.addWidget(IssueBox("warning", f"Steep: {r.steepest:.1f}%",
                                             "Parts of the road are steeper than most loaded trucks can climb "
                                             "comfortably. Try \u201cKeep slopes gentle\u201d with a lower limit."))
@@ -1306,6 +1480,11 @@ class PlanPanel(QWidget):
             system.open_path(out)
 
     def _load_road(self, rd):
+        self.r_std.blockSignals(True)
+        self.r_std.setCurrentIndex(max(0, self.r_std.findData(rd.standard or "")))
+        self.r_std.blockSignals(False)
+        self._radii = {i + 1: float(r) for i, r in enumerate(rd.radii)}
+        self.curve_rows = []
         _set_radio(self.sgroup, float(rd.interval), "v")
         (self.rb_start_g if rd.start_mode == "ground" else self.rb_start_t).setChecked(True)
         if rd.start_z == rd.start_z:
@@ -1372,6 +1551,9 @@ class PlanPanel(QWidget):
             self.truck.setValue(float(p.get("truck_m3", 0)))
         self.timer.stop()
         self.page.set_shape([tuple(q) for q in plan["points"]])
+        if plan["type"] == "road":
+            self._build_curve_rows()
+            self.timer.stop()
         self.takeoff = None
         self.go(len(self.steps()) - 1)
 

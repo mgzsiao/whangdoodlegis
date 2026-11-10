@@ -117,3 +117,51 @@ def test_no_data_and_bad_input(flat):
         rdm.design_road(flat, [(X0 + 1, Y0 - 1)], plain(start_z=100))
     with pytest.raises(ValueError):
         rdm.design_road(flat, LINE, plain(start_mode="typed", start_z=float("nan")))
+
+
+# --------------------------------------------------------------------------- curves (stage 4)
+from fieldortho.core import alignment as alm  # noqa: E402
+
+
+def test_curve_geometry_90_degrees():
+    al = alm.build([(0, 0), (0, 100), (100, 100)], [20])
+    c = al.curves[0]
+    assert c.delta == pytest.approx(90) and not c.left                      # north then east = right turn
+    assert c.tangent == pytest.approx(20) and c.length == pytest.approx(10 * math.pi)
+    assert c.pc == pytest.approx((0, 80)) and c.pt == pytest.approx((20, 100))
+    assert al.length == pytest.approx(80 + 10 * math.pi + 80)
+    x, y, tx, ty = al.point_at(c.pc_s + c.length / 2)
+    assert math.dist((x, y), c.center) == pytest.approx(20)
+    assert (tx, ty) == pytest.approx((math.sqrt(0.5), math.sqrt(0.5)))
+    row = rdm.curve_rows(al)[0]
+    assert row[7] == pytest.approx(20 * (math.sqrt(2) - 1), abs=1e-3)       # external
+    assert row[8] == pytest.approx(20 * (1 - math.sqrt(0.5)), abs=1e-3)     # middle ordinate
+    st = rdm.make_stations([(0, 0), (0, 100), (100, 100)], 20, al=al)
+    kinds = {round(s.s, 3): s.kind for s in st}
+    assert kinds[80.0] == "curve start" and kinds[round(80 + 10 * math.pi, 3)] == "curve end"
+
+
+def test_curves_made_smaller_to_fit():
+    al = alm.build([(0, 0), (0, 100), (30, 100), (30, 200)], [50, 50])
+    assert all(c.reduced for c in al.curves)
+    assert al.curves[0].tangent + al.curves[1].tangent <= 30 + 1e-6
+    assert al.curves[0].radius == pytest.approx(15, rel=0.01)
+
+
+def test_level_road_around_a_curve(flat):
+    pts = [(X0 + 40, Y0 - 160), (X0 + 40, Y0 - 60), (X0 + 140, Y0 - 60)]
+    r = rdm.design_road(flat, pts, plain(start_z=101.0, radii=[30]))
+    assert len(r.alignment.curves) == 1
+    assert r.length == pytest.approx(70 + 15 * math.pi + 70, rel=1e-6)
+    assert r.fill == pytest.approx(8 * r.length, rel=0.01)
+    assert any(s.kind == "curve start" for s in r.stations)
+
+
+def test_dpwh_checks(flat):
+    pts = [(X0 + 40, Y0 - 160), (X0 + 40, Y0 - 60), (X0 + 140, Y0 - 60)]
+    rd = plain(start_z=101.0, radii=[20], standard="fmr", fill_ratio=1.2)
+    r = rdm.design_road(flat, pts, rd)
+    titles = [t for t, _ in r.warnings]
+    assert "Curve 1 is too tight" in titles and "Fill sides too steep" in titles
+    assert rdm.STANDARDS["fmr"]["width"] == 6.1 and rdm.STANDARDS["fmr_low"]["width"] == 5.0
+    assert rdm.STANDARDS["tourism"]["min_radius"] == 50 and rdm.STANDARDS["fmr"]["min_radius"] == 30

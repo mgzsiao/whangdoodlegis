@@ -438,7 +438,7 @@ def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quali
     return "".join(parts)
 
 
-FILE_NOTES = {".pdf": "This report", ".xlsx": "Quantities, inputs and spot levels (Excel)",
+FILE_NOTES = {".pdf": "This report", ".xml": "LandXML for Civil 3D (surfaces, alignment, profile, sections)", ".xlsx": "Quantities, inputs and spot levels (Excel)",
               ".csv": "Table for any spreadsheet", ".gpkg": "GIS layers (QGIS, ArcGIS)", ".shp": "GIS layer (Shapefile)",
               ".geojson": "GIS layer (GeoJSON)", ".kml": "Google Earth", ".dxf": "CAD (AutoCAD, Civil 3D)",
               ".tif": "GeoTIFF raster", ".png": "Picture with world file", ".json": "Plan settings (reopen in the app)",
@@ -540,6 +540,10 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
         files.append(write_csv(base + "_quantities.csv", ("Quantity", "Value", "Note"), q))
         files.append(write_csv(base + "_spot_levels.csv", ("Point", "Easting_m", "Northing_m", "Ground_m",
                                                            "Finished_m", "Dig+_Fill-_m"), spots))
+        progress(62, "Civil 3D (LandXML) and CAD drawing")
+        from . import cad, landxml
+        files.append(landxml.surfaces_xml(base + "_civil3d.xml", t, plan.get("name", ""), dem_path))
+        files.append(cad.pad_dxf(base + "_drawing.dxf", t, outline, spots, plan.get("name", "")))
         plan_copy = base + ".plan.json"
         import json
         with open(plan_copy, "w", encoding="utf-8") as f:

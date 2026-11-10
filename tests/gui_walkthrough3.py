@@ -45,12 +45,13 @@ from synthetic_site import CX, CY, synthetic_job  # noqa: E402
 
 
 job_dir = REAL_JOB or synthetic_job(os.path.join(tmp, "jobs"))
+later_dir = None if REAL_JOB else synthetic_job(os.path.join(tmp, "jobs"), "Later survey", pile_h=12.0, shift=0.3)
 _store = ms.store_path(job_dir)
 _backup = open(_store, "rb").read() if os.path.exists(_store) else None     # real job: put back afterwards
 if REAL_JOB and _backup is not None:
     os.remove(_store)
 st = Settings(odm_path=os.path.join(HERE, "fake_odm"), jobs_root=os.path.dirname(job_dir), threads=2)
-st.recent_jobs = [job_dir]
+st.recent_jobs = [job_dir] + ([later_dir] if later_dir else [])
 st.save()
 w = MainWindow(st)
 w.resize(1440, 900)
@@ -167,6 +168,35 @@ shot("36_volume_level_pad")
 print(f"level pad: cut {m.result.cut_m3:,.1f}  fill {m.result.fill_m3:,.1f}")
 m._save()
 
+# compare with a later survey (synthetic only): the pile grew from 10 m to 12 m, the later flight sits 0.3 m higher
+if not REAL_JOB:
+    m.src_kind.setCurrentIndex(m.src_kind.findData("dsm"))
+    wait(lambda: not busy())
+    tool("compare")
+    m.cmp_job.setCurrentIndex(m.cmp_job.findData(later_dir))
+    m.cmp_order.setCurrentIndex(m.cmp_order.findData("earlier"))
+    for a in np.linspace(0, 2 * math.pi, 32, endpoint=False):
+        click_xy(cx + 25 * math.cos(a), cy + 25 * math.sin(a))
+    m._finish()
+    wait(lambda: not busy() and m.result is not None and not m.rerun.isActive())
+    shot("38_compare")
+    r = m.result
+    grow = math.pi / 3 * (24 ** 2 * 12 - 20 ** 2 * 10)
+    print(f"compare: raised {r.raised_m3:,.1f} (expected {grow:,.1f})  lowered {r.lowered_m3:,.1f}  "
+          f"shift {r.offset:+.3f}")
+    assert abs(r.raised_m3 - grow) / grow < 0.01 and abs(r.offset - 0.3) < 0.01
+    m._save()
+    # 3-D model of the outline (dialog answered automatically)
+    import fieldortho.gui.measure_page as mp
+    out3d = os.path.join(tmp, "3D")
+    mp._model3d_dialog = lambda page: {"kind": "ground", "shape": True, "detail": "light", "formats": ["dae", "stl"],
+                                       "folder": out3d}
+    from PySide6.QtWidgets import QProgressDialog
+    QProgressDialog.exec = lambda self: 0
+    m._export_3d()
+    print("3D:", sorted(os.listdir(out3d)))
+    assert any(f.endswith(".dae") for f in os.listdir(out3d))
+
 # saved list, show one again, export
 m.saved_list.setCurrentRow(0)
 m._show_saved()
@@ -174,7 +204,7 @@ wait(lambda: not busy())
 shot("37_saved_list")
 saved = ms.load_all(job_dir)
 print("saved:", [(s.name, s.summary()) for s in saved])
-assert len(saved) == 5
+assert len(saved) == (5 if REAL_JOB else 6)
 out = os.path.join(tmp, "export")
 files = ms.export_measurements(saved, out, "site", m.view.crs_wkt, "EPSG:4326", ["gpkg", "kml"],
                                (124.6, 8.5), "walkthrough")

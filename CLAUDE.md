@@ -133,6 +133,22 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
   Cross-sections; CSVs; centre line / stations / works strips / edges / section lines). GUI:
   `gui/road_widgets.py` (shape preview, section view, clickable side view under the map). Straight segments
   only. Tests `tests/test_road.py`; walkthrough `tests/gui_walkthrough5.py [JOB_DIR]` (real job: plans go to temp).
+- Stages 4-6 done (1.0.0):
+  - Curves: `core/alignment.py` (circular curves at bends, T = R tan(D/2), curves shrunk to fit short straights);
+    road stations follow the curved line (curve start / end stations). Guided "Smooth the bends?" step
+    (gentle 60 / normal 30 / tight 15 m / none, per-bend radius, live preview on the map).
+  - DPWH road standards in `core/road.py` STANDARDS, values read from the scanned DPWH D.O. 112 s. 2019 and
+    D.O. 15 s. 2020 (FMR 5.0 m < 200 ADT, 6.1 m >= 200 ADT, tourism 6.1 m; PCCP 200 / 230 mm; shoulders 1.5 m
+    gravel; 1.5% / 3.0% cross slopes; min radius 30 / 50 m; max grade 12%, min 0.5% in cut; fill max 1.5:1;
+    30 m between reverse curves). Base course is NOT in those orders. Warnings in `road_warnings`.
+  - Mass haul view (side view toggle, report picture).
+  - `core/landxml.py` (LandXML 1.2: TIN surfaces, alignment lines/curves, ProfSurf + ProfAlign PVIs,
+    CrossSects; N E order) and `core/cad.py` (DXF R12 drawing: plan, profile x10, cross-section sheets; lot
+    plan with spot levels) in both report packages ("_civil3d.xml", "_drawing.dxf"). Not yet tried in Civil 3D.
+  - Compare tool (Measure mode): `measure.compare_surveys` with median line-up on a 3-15 m ring.
+  - 3-D export `core/model3d.py` (.dae textured from DSM + ortho, .stl; moved near the origin, README has
+    the offset). Button in Measure panel; CLI `model3d`. CLI `plan` reruns a saved plan and writes the package.
+  - Tests: `tests/test_exports_cad.py`; walkthroughs 3 and 5 cover compare, 3-D, curves, DPWH, mass haul.
 - The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.
 - Next stages (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,

@@ -6,7 +6,7 @@ thickness) and sloped sides that meet the ground ("daylight"). Cut and fill area
 volumes between stations by the average end-area method; a running balance gives the mass haul.
 
 Offsets in cross-sections are measured to the right of the centre line looking toward higher stations.
-Straight segments only in this version (curves come later).
+Bends can be rounded into circular curves (core/alignment.py).
 """
 from __future__ import annotations
 
@@ -15,11 +15,36 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
-from . import earthworks as ew, measure as ms
+from . import alignment as alm, earthworks as ew, measure as ms
 from .terrain import Dem
 
 MAX_SIDE = 60.0           # metres beyond the shoulder that a side slope is followed
 PROFILE_MODES = ("follow", "gentle", "level", "straight", "targets")
+VERY_TIGHT = 15.0         # m: below this radius a curve is flagged as very tight (no standard chosen)
+
+# Road standards the user can choose. Values from DPWH Department Order No. 112, s. 2019 ("Revised Design
+# Standards for Tourism and Farm to Market Roads") as amended by D.O. No. 15, s. 2020 (pavement width of
+# farm-to-market roads with 200 or more vehicles a day). The order gives the concrete (PCCP) thickness only;
+# base course is not specified there, so it is not included.
+DPWH_SOURCE = ("DPWH D.O. No. 112, s. 2019 (Revised Design Standards for Tourism and Farm to Market Roads), as "
+               "amended by D.O. No. 15, s. 2020")
+STANDARDS = {
+    "fmr_low": dict(label="DPWH farm-to-market road, under 200 vehicles a day",
+                    width=5.0, crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, pavement_t=0.20,
+                    cut_ratio=1.0, fill_ratio=1.5, max_grade=12.0, min_radius=30.0, speed="30 km/h"),
+    "fmr": dict(label="DPWH farm-to-market road, 200 or more vehicles a day",
+                width=6.1, crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, pavement_t=0.20,
+                cut_ratio=1.0, fill_ratio=1.5, max_grade=12.0, min_radius=30.0, speed="30 km/h"),
+    "tourism": dict(label="DPWH tourism road",
+                    width=6.1, crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, pavement_t=0.23,
+                    cut_ratio=1.0, fill_ratio=1.5, max_grade=12.0, min_radius=50.0,
+                    speed="60 / 40 / 30 km/h (flat / rolling / mountainous)"),
+}
+STANDARD_NOTES = (
+    "Pavement width, concrete thickness (minimum), 1.5 m gravel shoulders, 1.50% cross slope on concrete, 3.0% on "
+    "gravel shoulders, minimum curve radius, maximum grade 12% and minimum 0.50% on cut sections, fill slopes no "
+    "steeper than 1.5 : 1 and cut slopes of 1.5 : 1 to 1 : 1 for common materials (0.5 : 1 to 1 : 1 rippable rock, "
+    "0.25 : 1 to 0.5 : 1 hard rock), 30 m minimum straight between reverse curves.")
 
 
 def station_label(s: float) -> str:
@@ -56,6 +81,9 @@ class RoadDesign:
     swell_pct: float = ms.DEFAULT_SWELL
     shrink_pct: float = ew.DEFAULT_SHRINK
     truck_m3: float = 0.0
+    radii: list = field(default_factory=list)        # curve radius at each bend (0 = sharp bend)
+    standard: str = ""                               # "" (own values) or a key of STANDARDS
+    min_radius: float = 0.0                          # for the "too tight" warning (0 = none)
 
     @property
     def half(self) -> float:
@@ -79,6 +107,7 @@ class Station:
     cum_cut: float = 0.0
     cum_fill: float = 0.0
     mass: float = 0.0             # running balance: cut - fill x (1 + shrink)
+    kind_note: str = ""
     left_catch: float = 0.0       # where the sides meet the ground (offset, m)
     right_catch: float = 0.0
     side_limit: bool = False      # a side slope did not meet the ground within MAX_SIDE
@@ -118,6 +147,10 @@ class RoadResult:
     no_data: int = 0                               # stations without ground height
     crs_wkt: str = ""
     cell: float = 0.0
+    alignment: alm.Alignment | None = field(default=None, repr=False)
+    centre: np.ndarray | None = field(default=None, repr=False)     # centre line points (curves included)
+    warnings: list = field(default_factory=list)                     # (title, text)
+    standard: str = ""
 
     @property
     def net(self) -> float:
@@ -139,7 +172,13 @@ class RoadResult:
 
 
 # ============================================================================ stations
-def make_stations(pts, interval: float) -> list[Station]:
+def make_stations(pts, interval: float, radii=None, al: alm.Alignment | None = None) -> list[Station]:
+    if interval <= 0:
+        raise ValueError("The station spacing must be more than 0.")
+    if al is None and radii and any(r > 0 for r in radii):
+        al = alm.build(pts, radii)
+    if al is not None and al.curves:
+        return _stations_on(al, interval)
     p = np.asarray(pts, float)
     if len(p) < 2:
         raise ValueError("Click at least two points along the road.")
@@ -173,6 +212,28 @@ def make_stations(pts, interval: float) -> list[Station]:
             n = math.hypot(*b)
             u = b / n if n > 1e-9 else units[i]
         out.append(Station(float(s), float(x), float(y), float(u[0]), float(u[1]), marks[s]))
+    return out
+
+
+def _stations_on(al: alm.Alignment, interval: float) -> list[Station]:
+    L = al.length
+    marks = {round(float(s), 6): "" for s in np.arange(0, L, interval)}
+    for ks, kind in al.key_stations().items():
+        near = [m for m in marks if abs(m - ks) <= 0.01]
+        for m in near:
+            del marks[m]
+        marks[ks] = kind
+    marks[round(L, 6)] = "end"
+    out = []
+    for s in sorted(marks):
+        x, y, tx, ty = al.point_at(s)
+        if marks[s] == "bend":
+            _, _, ax, ay = al.point_at(s - 1e-4)
+            _, _, bx, by = al.point_at(s + 1e-4)
+            n = math.hypot(ax + bx, ay + by)
+            if n > 1e-9:
+                tx, ty = (ax + bx) / n, (ay + by) / n
+        out.append(Station(float(s), float(x), float(y), float(tx), float(ty), marks[s]))
     return out
 
 
@@ -348,12 +409,14 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
         raise ValueError("Side slopes must be more than 0.")
     if rd.width <= 0:
         raise ValueError("The road width must be more than 0.")
-    stations = make_stations(pts, rd.interval)
-    line = LineString(pts)
+    al = alm.build(pts, rd.radii)
+    stations = make_stations(pts, rd.interval, al=al)
+    cxy, _ = al.densify(1.0)
+    line = LineString(cxy)
     dem = ms.read_area(path, line.buffer(rd.half + MAX_SIDE).bounds, max_cells)
     step = max(dem.cell, 0.2)
     # dense ground profile for the road height and the side view
-    dxy, dd = ms.densify(pts, max(step, 0.5))
+    dxy, dd = al.densify(max(step, 0.5))
     dg = ms.sample(dem, dxy[:, 0], dxy[:, 1])
     dz = road_heights(dd, dg, rd)
     sd = np.array([s.s for s in stations])
@@ -386,7 +449,12 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
         shape += f"; shoulders {rd.shoulder_w:g} m at {rd.shoulder_pct:g}% each side"
     if rd.ditch:
         shape += f"; ditches in cut {rd.ditch_w:g} m wide, {rd.ditch_d:g} m deep"
-    inputs = [("Heights from", ""), ("Stations every", f"{rd.interval:g} m (plus bends and the end)"),
+    curves = ", ".join(f"R {c.radius:.0f} m" for c in al.curves) if al.curves else "none (sharp bends)"
+    inputs = [("Heights from", ""),
+              ("Road standard", STANDARDS[rd.standard]["label"] + f" ({DPWH_SOURCE})" if rd.standard in STANDARDS
+               else "my own values"),
+              ("Stations every", f"{rd.interval:g} m (plus bends, curve starts / ends and the end)"),
+              ("Curves", curves),
               ("Starting height", (f"ground at the start ({stations[0].design:.2f} m)" if rd.start_mode == "ground"
                                    else f"{rd.start_z:.2f} m (typed)")),
               ("How the road rises and falls", prof), ("Road shape", shape),
@@ -394,12 +462,66 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
               ("Side slopes", f"{soil}: cut {rd.cut_ratio:g} : 1, fill {rd.fill_ratio:g} : 1 (out : up)"),
               ("Soil loosening when dug (swell)", f"{rd.swell_pct:g}%"),
               ("Extra soil for packed fill (shrink)", f"{rd.shrink_pct:g}%")]
+    warn = road_warnings(al, rd, stations, grades, sd)
     return RoadResult(stations, float(sd[-1]), dd, dg, dz, cc, cf,
                       ew.make_haul(cc, cf, rd.swell_pct, rd.shrink_pct, rd.truck_m3), inputs,
                       float(abs(grades[gi])) if len(grades) else 0.0, float(sd[gi]) if len(grades) else 0.0,
                       float(np.nanmax(depth)) if np.isfinite(depth).any() else 0.0,
                       float(-np.nanmin(depth)) if np.isfinite(depth).any() else 0.0,
-                      sum(s.side_limit for s in stations), int((~np.isfinite(sg)).sum()), dem.crs_wkt, dem.cell)
+                      sum(s.side_limit for s in stations), int((~np.isfinite(sg)).sum()), dem.crs_wkt, dem.cell,
+                      al, cxy, warn, rd.standard)
+
+
+def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, str]]:
+    out = []
+    std = STANDARDS.get(rd.standard)
+    rmin = rd.min_radius or (std["min_radius"] if std else 0.0)
+    for k, c in enumerate(al.curves, 1):
+        if c.reduced:
+            out.append((f"Curve {k} made smaller", f"The bend at point {c.vertex + 1} had room for a radius of only "
+                        f"{c.radius:.0f} m (asked {c.radius_asked:.0f} m): the straights next to it are too short."))
+        if rmin and c.radius < rmin - 1e-6:
+            out.append((f"Curve {k} is too tight", f"Radius {c.radius:.0f} m is less than the minimum {rmin:g} m"
+                        + (" of the chosen DPWH standard." if std else ".")))
+        elif not rmin and c.radius < VERY_TIGHT:
+            out.append((f"Curve {k} is very tight", f"Radius {c.radius:.0f} m: long trucks may not get around it."))
+    if std:
+        for a, b, L, rev in alm.straights_between(al):
+            if rev and L < 30:
+                out.append(("Reverse curves too close", f"Only {L:.0f} m of straight road between curves that turn "
+                            "opposite ways (DPWH minimum 30 m)."))
+        if len(grades) and np.max(np.abs(grades)) > std["max_grade"] + 1e-6:
+            out.append(("Steeper than the standard", f"The road reaches {np.max(np.abs(grades)):.1f}%; the DPWH "
+                        f"maximum is {std['max_grade']:g}%."))
+        if rd.fill_ratio < 1.5 - 1e-9:
+            out.append(("Fill sides too steep", f"{rd.fill_ratio:g} : 1 is steeper than the DPWH maximum fill slope "
+                        "of 1.5 : 1."))
+        flat_cut = 0
+        for i, st_ in enumerate(stations[:-1]):
+            g = abs(grades[i]) if i < len(grades) else 99
+            if st_.depth == st_.depth and st_.depth > 0 and g < 0.5:
+                flat_cut += 1
+        if flat_cut:
+            out.append(("Too flat in cut", f"{flat_cut} stretch(es) of the road are dug in and flatter than 0.50%: "
+                        "water may not drain (DPWH minimum on cut sections)."))
+    return out
+
+
+def curve_rows(al) -> list[tuple]:
+    """Curve table: (no., PI easting, PI northing, deflection deg, radius, tangent, length, external, mid-ordinate,
+    PC station, PT station, turns)."""
+    rows = []
+    for k, c in enumerate(al.curves, 1):
+        ext = c.radius * (1 / math.cos(math.radians(c.delta) / 2) - 1)
+        rows.append((k, round(c.pi[0], 3), round(c.pi[1], 3), round(c.delta, 4), round(c.radius, 3),
+                     round(c.tangent, 3), round(c.length, 3), round(ext, 3), round(c.mid_ordinate, 3),
+                     station_label(c.pc_s), station_label(c.pt_s), "left" if c.left else "right"))
+    return rows
+
+
+CURVE_HEADER = ("Curve", "PI easting (m)", "PI northing (m)", "Deflection (°)", "Radius (m)", "Tangent T (m)",
+                "Curve length (m)", "External E (m)", "Middle ordinate M (m)", "Curve start (PC)",
+                "Curve end (PT)", "Turns")
 
 
 def design_dict(rd: RoadDesign) -> dict:

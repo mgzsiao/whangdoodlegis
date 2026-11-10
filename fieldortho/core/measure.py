@@ -364,7 +364,8 @@ def overlay_rgba(dz: np.ndarray, scale_m: float | None = None) -> np.ndarray:
 
 
 # ============================================================================ saved measurements
-KINDS = {"point": "Point", "height": "Height difference", "path": "Path", "area": "Area", "volume": "Volume"}
+KINDS = {"point": "Point", "height": "Height difference", "path": "Path", "area": "Area", "volume": "Volume",
+         "compare": "Change between surveys"}
 SOURCES = {"dtm": "bare ground (DTM)", "dsm": "ground with trees, buildings and piles (DSM)"}
 
 # result key -> (label, unit) in display order
@@ -380,6 +381,9 @@ RESULT_LABELS = {
     "reference": ("Measured from", ""), "cut_m3": ("Dig (cut)", "m³"), "fill_m3": ("Fill", "m³"),
     "net_m3": ("Net (cut − fill)", "m³"), "total_m3": ("Total moved", "m³"),
     "swell_pct": ("Soil loosening", "%"), "loose_m3": ("Loose volume to haul", "m³"),
+    "compared_with": ("Compared with", ""), "raised_m3": ("Raised (added)", "m³"),
+    "lowered_m3": ("Lowered (removed)", "m³"), "change_m3": ("Net change", "m³"),
+    "offset_m": ("Height shift applied", "m"),
 }
 
 
@@ -404,6 +408,8 @@ class Measurement:
             return f"{r.get('length_m', 0):,.1f} m"
         if self.kind == "area":
             return f"{r.get('area_m2', 0):,.0f} m²"
+        if self.kind == "compare":
+            return f"{r.get('change_m3', 0):+,.0f} m³ change"
         return f"{r.get('net_m3', 0):,.0f} m³ net"
 
 
@@ -414,6 +420,11 @@ def results_dict(kind: str, res, swell_pct: float = DEFAULT_SWELL) -> dict:
     if isinstance(res, HeightResult):
         return {"z_a_m": round(res.z_a, 3), "z_b_m": round(res.z_b, 3), "rise_m": round(res.rise, 3),
                 "horizontal_m": round(res.horizontal, 2), "slope_pct": round(res.slope_pct, 2)}
+    if isinstance(res, CompareResult):
+        a = res.area
+        return {"perimeter_m": round(a.perimeter_2d, 2), "area_m2": round(a.area_2d, 2),
+                "raised_m3": round(res.raised_m3, 2), "lowered_m3": round(res.lowered_m3, 2),
+                "change_m3": round(res.net_m3, 2), "offset_m": round(res.offset, 3)}
     if isinstance(res, PathResult):
         return {"length_m": round(res.length_2d, 2), "length_3d_m": round(res.length_3d, 2),
                 "z_start_m": round(res.z_start, 3), "z_end_m": round(res.z_end, 3), "z_min_m": round(res.z_min, 3),
@@ -517,3 +528,64 @@ def export_measurements(items: list[Measurement], out_dir: str, base_name: str, 
             notes.append(n)
     ex.write_export_readme(readme, title, dst_crs, lonlat, files, notes)
     return files + [readme]
+
+
+# ============================================================================ comparing two surveys
+@dataclass
+class CompareResult:
+    area: AreaResult
+    raised_m3: float           # ground higher in the later survey (filled, piled up, deposited)
+    lowered_m3: float          # ground lower in the later survey (dug, eroded, hauled away)
+    raised_area: float
+    lowered_area: float
+    max_raise: float
+    max_lower: float
+    offset: float              # height shift applied to the later survey to line it up (0 = none)
+    offset_points: int         # cells of stable ground used for the shift
+    no_data_pct: float
+    dz: np.ndarray = field(repr=False)          # later - earlier (after the shift), NaN outside
+    transform: object = field(repr=False)
+
+    @property
+    def net_m3(self) -> float:
+        return self.raised_m3 - self.lowered_m3
+
+
+def compare_surveys(before: str, after: str, pts, line_up: bool = True, ring=(3.0, 15.0),
+                    max_cells: int = MAX_CELLS) -> CompareResult:
+    """Volume change between two elevation models inside an outline. With line_up, the later survey is shifted
+    up or down so that the ground in a ring around the outline (between ring[0] and ring[1] metres out) matches
+    on average (median), which removes most of the height offset between flights without ground control."""
+    from rasterio.features import geometry_mask
+    from rasterio.warp import Resampling, reproject
+    poly = _polygon(pts)
+    outer = poly.buffer(ring[1]) if line_up else poly
+    dem = read_area(before, outer.bounds, max_cells)
+    later = np.full(dem.shape, np.nan)
+    with rasterio.open(after) as ds:
+        reproject(rasterio.band(ds, 1), later, src_transform=ds.transform, src_crs=ds.crs, src_nodata=ds.nodata,
+                  dst_transform=dem.transform, dst_crs=rasterio.crs.CRS.from_wkt(dem.crs_wkt), dst_nodata=np.nan,
+                  resampling=Resampling.bilinear)
+    later[later < -1000] = np.nan
+    diff = later - dem.z
+    mask = geometry_mask([poly], out_shape=dem.shape, transform=dem.transform, invert=True)
+    offset, n_ring = 0.0, 0
+    if line_up:
+        rmask = geometry_mask([outer.difference(poly.buffer(ring[0]))], out_shape=dem.shape,
+                              transform=dem.transform, invert=True)
+        v = diff[rmask & np.isfinite(diff)]
+        n_ring = int(v.size)
+        if n_ring < 20:
+            raise ValueError("Not enough ground around the area is covered by both surveys to line them up. "
+                             "Untick “line up” or draw the area further from the edge of the maps.")
+        offset = float(np.median(v))
+    d = diff - offset
+    d[~mask] = np.nan
+    base = _area_from(dem, mask, poly)
+    ca = abs(dem.transform.a * dem.transform.e)
+    ok = np.isfinite(d)
+    up, dn = ok & (d > 0), ok & (d < 0)
+    nod = 100.0 * (mask & ~ok).sum() / max(1, mask.sum())
+    return CompareResult(base, float(d[up].sum() * ca), float(-d[dn].sum() * ca), float(up.sum() * ca),
+                         float(dn.sum() * ca), float(d[up].max()) if up.any() else 0.0,
+                         float(-d[dn].min()) if dn.any() else 0.0, offset, n_ring, nod, d, dem.transform)

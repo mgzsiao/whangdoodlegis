@@ -12,14 +12,15 @@ X0, Y0, CELL, N = 695600.0, 982600.0, 0.1, 1000        # UTM 51N
 CX, CY = X0 + 50, Y0 - 50                               # centre of the pile
 
 
-def synthetic_job(root):
-    job_dir = os.path.join(root, "Synthetic pile site")
+def synthetic_job(root, name="Synthetic pile site", pile_h=10.0, shift=0.0):
+    """pile_h: height of the cone pile (slope 0.5, so radius = 2 x height); shift: whole map raised (m)."""
+    job_dir = os.path.join(root, name)
     gis = os.path.join(job_dir, "GIS")
     os.makedirs(gis)
     r, c = np.mgrid[0:N, 0:N]
     x, y = X0 + (c + 0.5) * CELL, Y0 - (r + 0.5) * CELL
-    ground = 120 + 0.05 * (x - X0) + 0.5 * np.sin((y - Y0) / 15)
-    pile = np.clip(10 - np.hypot(x - CX, y - CY) * 0.5, 0, None)
+    ground = 120 + 0.05 * (x - X0) + 0.5 * np.sin((y - Y0) / 15) + shift
+    pile = np.clip(pile_h - np.hypot(x - CX, y - CY) * 0.5, 0, None)
     files = {}
     for key, z in (("dtm", ground), ("dsm", ground + pile)):
         p = os.path.join(gis, f"site_{key.upper()}.tif")
@@ -27,6 +28,6 @@ def synthetic_job(root):
                            transform=from_origin(X0, Y0, CELL, CELL), nodata=-9999) as ds:
             ds.write(z.astype("float32"), 1)
         files[key] = p
-    job = jobs.Job(name="Synthetic pile site", job_dir=job_dir, status=jobs.STATUS_DONE, summary={"files": files})
+    job = jobs.Job(name=name, job_dir=job_dir, status=jobs.STATUS_DONE, summary={"files": files})
     job.save()
     return job_dir

@@ -176,6 +176,11 @@ class RoadProfileView(QWidget):
         self.setFixedHeight(190)
         self.r = None
         self.sel = 0
+        self.mode = "profile"          # profile | mass
+
+    def set_mode(self, m):
+        self.mode = m
+        self.update()
 
     def set_result(self, r):
         self.r = r
@@ -194,6 +199,53 @@ class RoadProfileView(QWidget):
         pad = max(0.3, (z1 - z0) * 0.1)
         return d, g, z, ok, z0 - pad, z1 + pad
 
+    def _paint_mass(self, p):
+        from ..core.road import station_label
+        from .measure_page import nice_step
+        st = self.r.stations
+        sd = np.array([s.s for s in st])
+        m = np.array([s.mass for s in st])
+        lo, hi = min(0.0, float(m.min())), max(0.0, float(m.max()))
+        pad = max(1.0, (hi - lo) * 0.1)
+        lo, hi = lo - pad, hi + pad
+        L, R, T, B = 64, 12, 22, 22
+        W, H = self.width() - L - R, self.height() - T - B
+        dm = float(sd[-1]) or 1.0
+
+        def P(a, b):
+            return QPointF(L + a / dm * W, T + (hi - b) / (hi - lo) * H)
+        p.setFont(QFont(self.font().family(), 8))
+        p.setPen(QColor(theme.INK))
+        p.drawText(QRectF(L, 2, W, 16), Qt.AlignLeft,
+                   "Earth balance along the road (m³): above zero = more dug than the fill needs so far")
+        p.setPen(QColor(theme.MUTED))
+        for v in (lo, 0.0, hi):
+            y = P(0, v).y()
+            p.drawText(QRectF(0, y - 7, L - 4, 14), Qt.AlignRight | Qt.AlignVCenter, f"{v:,.0f}")
+        stp = nice_step(dm / 6)
+        x = 0.0
+        while x <= dm + 1e-9:
+            q = P(x, lo)
+            p.drawText(QRectF(q.x() - 30, T + H + 4, 60, 14), Qt.AlignCenter, station_label(x))
+            x += stp
+        p.setPen(QPen(QColor(theme.INK), 1))
+        p.drawLine(P(0, 0), P(dm, 0))
+        for a, b, mb, ma in zip(sd[:-1], sd[1:], m[1:], m[:-1]):
+            c = CUT if mb >= 0 else FILL
+            p.setPen(Qt.NoPen)
+            p.setBrush(soft(c, 60))
+            p.drawPolygon(QPolygonF([P(a, 0), P(a, ma), P(b, mb), P(b, 0)]))
+        path = QPainterPath(P(sd[0], m[0]))
+        for a, b in zip(sd[1:], m[1:]):
+            path.lineTo(P(a, b))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(NAVY, 2.2))
+        p.drawPath(path)
+        if 0 <= self.sel < len(st):
+            q = P(st[self.sel].s, lo)
+            p.setPen(QPen(QColor(theme.INK), 1.5, Qt.DashLine))
+            p.drawLine(QPointF(q.x(), T), QPointF(q.x(), T + H))
+
     def mousePressEvent(self, e):
         if self.r is None:
             return
@@ -208,6 +260,9 @@ class RoadProfileView(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor("white"))
         if self.r is None:
+            return
+        if self.mode == "mass":
+            self._paint_mass(p)
             return
         d, g, z, ok, z0, z1 = self._frame()
         L, R, T, B = 54, 12, 22, 22
