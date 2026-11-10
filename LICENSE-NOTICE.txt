@@ -23,9 +23,13 @@ Third-party software included or installed
 - OpenDroneMap (ODM) - GNU Affero General Public License v3.0.
   WhangDoodleGIS runs ODM as a separate program. Source code: https://github.com/OpenDroneMap/ODM
   The ODM installer adds its own license files under C:\ODM\licenses.
+- OpenPointClass pre-trained model (vehicles-vegetation-buildings, release v1.1.3) by UAV4GEO -
+  from the OpenPointClass project, GNU Affero General Public License v3.0.
+  It is the same model OpenDroneMap downloads during processing; it is included so laptops
+  without internet get the same results. Source code: https://github.com/uav4geo/OpenPointClass
 - Qt / PySide6 - GNU LGPL v3 (https://www.qt.io, https://wiki.qt.io/Qt_for_Python).
 - GDAL / PROJ (via rasterio and pyogrio) - MIT / X11 style licences.
-- rasterio, pyogrio, shapely, pyproj, numpy, scipy, Pillow, contourpy, pyshp -
+- rasterio, pyogrio, shapely, pyproj, numpy, scipy, Pillow, contourpy, pyshp, openpyxl -
   BSD / MIT / HPND style licences.
 - EGM96 geoid grid (us_nga_egm96_15.tif) from the PROJ-data project - public domain (US NGA).
 - Icons: Segoe Fluent Icons / Segoe MDL2 Assets, part of Windows (not redistributed).
