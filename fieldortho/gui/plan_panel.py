@@ -13,9 +13,11 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QSlider,
                                QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QProgressBar, QProgressDialog, QPushButton, QRadioButton,
-                               QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
+                               QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget, QAbstractItemView, QHeaderView)
 
 from ..core import activity, alignment as alm, crs as crsmod, earthworks as ew, measure as ms, road as rdm, system
+from ..core import vertical as vt
 from ..core.settings import config_dir
 from . import theme
 from .export_widgets import CrsPicker, FolderPicker, FormatChecks
@@ -183,13 +185,13 @@ class PlanPanel(QWidget):
     STEPS = {
         "pad": ["type", "draw", "height", "edges", "soil", "result"],
         "pile": ["type", "draw", "ref", "soil", "result"],
-        "road": ["type", "draw", "curves", "stations", "rise", "shape", "soil", "result"],
+        "road": ["type", "draw", "curves", "stations", "rise", "vcurves", "shape", "soil", "result"],
     }
     TITLES = {"type": "What are you planning?", "draw": "Draw the area", "height": "How high should the ground be?",
               "edges": "What happens at the edges?", "ref": "Measure from what?", "soil": "Soil and trucks",
               "result": "Results", "stations": "How often should we check the ground?",
               "rise": "How high should the road be?", "shape": "What does the road look like across?",
-              "curves": "Smooth the bends?"}
+              "curves": "Smooth the bends?", "vcurves": "Smooth the grade changes?"}
 
     def __init__(self, page):
         super().__init__()
@@ -234,7 +236,7 @@ class PlanPanel(QWidget):
         for key, fn in (("type", self._p_type), ("draw", self._p_draw), ("height", self._p_height),
                         ("edges", self._p_edges), ("ref", self._p_ref), ("curves", self._p_curves),
                         ("stations", self._p_stations),
-                        ("rise", self._p_rise), ("shape", self._p_shape), ("soil", self._p_soil),
+                        ("rise", self._p_rise), ("vcurves", self._p_vcurves), ("shape", self._p_shape), ("soil", self._p_soil),
                         ("result", self._p_result)):
             pw = QWidget()
             pl = QVBoxLayout(pw)
@@ -619,6 +621,211 @@ class PlanPanel(QWidget):
         lay.addWidget(explain("8% means the road rises 8 m for every 100 m. Gentler slopes are easier for loaded "
                               "trucks but usually need more digging. The heights are the road surface at the centre."))
 
+    def _p_vcurves(self, lay):
+        lay.addWidget(label("Where the road changes from one slope to another (a grade change point, PVI), it can "
+                            "change gradually along a smooth vertical curve instead of a sudden kink. Drivers then "
+                            "see far enough over a hump (crest) and their headlights reach far enough into a dip "
+                            "(sag).", "", wrap=True))
+        self.vc_group = QButtonGroup(self)
+        self.vc_yes = radio_block(self.vc_group, "yes", "Yes \u2013 straight grades with smooth vertical curves",
+                                  "The app proposes the grade change points from the road height you chose; you can "
+                                  "change them below.", lay)
+        self.vc_no = radio_block(self.vc_group, "no", "No \u2013 keep the road height as chosen",
+                                 "Quick estimates; the road height is smoothed station by station.", lay)
+        self.vc_yes.setChecked(True)
+        for b in (self.vc_yes, self.vc_no):
+            b.toggled.connect(self._vc_changed)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Design speed"))
+        self.vc_speed = QComboBox()
+        for v in vt.SPEEDS:
+            self.vc_speed.addItem(f"{v} km/h", v)
+        self.vc_speed.setCurrentIndex(self.vc_speed.findData(30))
+        self.vc_speed.currentIndexChanged.connect(self._vc_speed_changed)
+        row.addWidget(self.vc_speed)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.vc_speed_note = label("", "Hint", wrap=True)
+        lay.addWidget(self.vc_speed_note)
+        lay.addWidget(label("Reference: how long a curve must be (AASHTO 2018)", "H2"))
+        self.k_table = QTableWidget(len(vt.K_TABLE), 5)
+        self.k_table.setHorizontalHeaderLabels(["Speed", "Sight dist.", "K crest", "K sag", "Min. L"])
+        self.k_table.verticalHeader().setVisible(False)
+        self.k_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.k_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.k_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.k_table.verticalHeader().setDefaultSectionSize(24)
+        self.k_table.setFixedHeight(40 + 24 * len(vt.K_TABLE))
+        self.k_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lay.addWidget(self.k_table)
+        lay.addWidget(explain("Curve length L = K \u00d7 A, where A is the change of grade in % (e.g. from +6% to "
+                              "\u22122% is A = 8). K comes from the design speed: crest curves for stopping sight "
+                              "distance over a hump, sag curves for headlight reach in a dip. Never shorter than "
+                              "0.6 \u00d7 speed. Source: " + vt.AASHTO_SOURCE + "."))
+        lay.addWidget(label("Grade change points (PVI)", "H2"))
+        self.pvi_table = QTableWidget(0, 4)
+        self.pvi_table.setHorizontalHeaderLabels(["Station", "Elevation (m)", "Curve length (m)", "Result"])
+        hh = self.pvi_table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hh.setStretchLastSection(True)
+        self.pvi_table.verticalHeader().setVisible(False)
+        self.pvi_table.setMinimumHeight(170)
+        self.pvi_table.itemChanged.connect(self._pvi_edited)
+        lay.addWidget(self.pvi_table)
+        row = QHBoxLayout()
+        b = QPushButton("Propose again")
+        b.setToolTip("Forget my changes and let the app propose the points from the road height.")
+        b.clicked.connect(self._pvi_reset)
+        row.addWidget(b)
+        b = QPushButton("Add a point")
+        b.clicked.connect(self._pvi_add)
+        row.addWidget(b)
+        b = QPushButton("Delete selected")
+        b.clicked.connect(self._pvi_delete)
+        row.addWidget(b)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.vc_status = label("", "Hint", wrap=True)
+        lay.addWidget(self.vc_status)
+        lay.addWidget(explain("Type a station as metres (e.g. 120) or 0+120. Leave the curve length empty to use the "
+                              "design speed. The first and last points are the start and end of the road. The side "
+                              "view under the map shows the result."))
+        self._pvis_auto = True
+        self._pvis: list = []
+
+    def _vc_speed_default(self):
+        std = rdm.STANDARDS.get(self.r_std.currentData() or "") if hasattr(self, "r_std") else None
+        if std and not getattr(self, "_vc_speed_set", False):
+            import re
+            m = re.search(r"(\d+)\s*km/h", str(std["speed"]))
+            i = self.vc_speed.findData(int(m.group(1))) if m else -1
+            if i >= 0:
+                self.vc_speed.blockSignals(True)
+                self.vc_speed.setCurrentIndex(i)
+                self.vc_speed.blockSignals(False)
+        self.vc_speed_note.setText(
+            (f"Chosen road standard: {std['speed']}." if std else "No road standard chosen: 30 km/h suits most "
+             "barangay and farm-to-market roads.") + " Choose the speed vehicles will really drive.")
+
+    def _fill_k_table(self):
+        sp = self.vc_speed.currentData()
+        for i, (v, (ssd, kc, ks)) in enumerate(vt.K_TABLE.items()):
+            for c, t in enumerate((f"{v} km/h", f"{ssd} m", f"{kc}", f"{ks}", f"{vt.min_length(v):.0f} m")):
+                it = QTableWidgetItem(t)
+                if v == sp:
+                    f_ = it.font()
+                    f_.setBold(True)
+                    it.setFont(f_)
+                    from PySide6.QtGui import QColor
+                    it.setBackground(QColor("#FFE9A8"))
+                self.k_table.setItem(i, c, it)
+
+    def _vc_speed_changed(self, _i):
+        self._vc_speed_set = True
+        self._fill_k_table()
+        self._changed()
+
+    def _vc_changed(self, *_):
+        on = self.vc_yes.isChecked()
+        for w_ in (self.vc_speed, self.pvi_table, self.k_table):
+            w_.setEnabled(on)
+        self._changed()
+
+    def _fill_pvis(self, pvis, curves=()):
+        by = {round(c.pvi_s, 3): c for c in curves}
+        self.pvi_table.blockSignals(True)
+        self.pvi_table.setRowCount(len(pvis))
+        for i, r_ in enumerate(pvis):
+            s_, z_ = float(r_[0]), float(r_[1])
+            L = float(r_[2]) if len(r_) > 2 and r_[2] else 0.0
+            c = by.get(round(s_, 3))
+            if i == 0:
+                res = "start of the road"
+            elif i == len(pvis) - 1:
+                res = "end of the road"
+            elif c is None:
+                res = ""
+            elif c.length <= 0:
+                res = "no curve needed (grade change below 0.2%)"
+            else:
+                res = (f"{c.kind}, L {c.length:.1f} m, K {c.k:.1f} ({c.g1:+.2f}% \u2192 {c.g2:+.2f}%)"
+                       + (" \u26a0 shortened to fit" if c.reduced else "")
+                       + (f" \u26a0 needs K {c.k_min:g}" if c.short else " \u2714"))
+            vals = (rdm.station_label(s_), f"{z_:.3f}", f"{L:g}" if L > 0 else "", res)
+            for c_, t in enumerate(vals):
+                it = QTableWidgetItem(t)
+                if c_ == 3 or (c_ == 2 and i in (0, len(pvis) - 1)):
+                    it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                if c_ == 3 and "\u26a0" in t:
+                    it.setForeground(Qt.darkRed)
+                self.pvi_table.setItem(i, c_, it)
+        self.pvi_table.blockSignals(False)
+        self._pvis = [list(r_) + [0.0] * (3 - len(r_)) for r_ in pvis]
+
+    @staticmethod
+    def _station_m(t: str) -> float:
+        t = t.strip()
+        if "+" in t:
+            k, m = t.split("+", 1)
+            return float(k or 0) * 1000 + float(m)
+        return float(t)
+
+    def _pvi_edited(self, item):
+        r_, c_ = item.row(), item.column()
+        if not (0 <= r_ < len(self._pvis)) or c_ > 2:
+            return
+        try:
+            t = item.text().strip()
+            if c_ == 0:
+                self._pvis[r_][0] = self._station_m(t)
+            elif c_ == 1:
+                self._pvis[r_][1] = float(t)
+            else:
+                self._pvis[r_][2] = float(t) if t else 0.0
+        except ValueError:
+            self.vc_status.setText("\u26a0 Could not read that value; type a number.")
+            return
+        self._pvis_auto = False
+        self._pvis.sort(key=lambda q: q[0])
+        self._changed()
+
+    def _pvi_reset(self):
+        self._pvis_auto = True
+        self._changed()
+
+    def _pvi_add(self):
+        if len(self._pvis) < 2:
+            return
+        gaps = [(b[0] - a[0], i) for i, (a, b) in enumerate(zip(self._pvis, self._pvis[1:]))]
+        _g, i = max(gaps)
+        a, b = self._pvis[i], self._pvis[i + 1]
+        self._pvis.insert(i + 1, [(a[0] + b[0]) / 2, round((a[1] + b[1]) / 2, 3), 0.0])
+        self._pvis_auto = False
+        self._fill_pvis(self._pvis)
+        self._changed()
+
+    def _pvi_delete(self):
+        rows = sorted({i.row() for i in self.pvi_table.selectedIndexes()}, reverse=True)
+        rows = [r_ for r_ in rows if 0 < r_ < len(self._pvis) - 1]
+        if not rows:
+            self.vc_status.setText("Select a point in the middle (the start and end stay).")
+            return
+        for r_ in rows:
+            del self._pvis[r_]
+        self._pvis_auto = False
+        self._fill_pvis(self._pvis)
+        self._changed()
+
+    def _show_vcurves(self, r):
+        if not self.vc_yes.isChecked():
+            return
+        self._fill_pvis(r.pvis, r.vcurves)
+        n = sum(1 for c in r.vcurves if c.length > 0)
+        bad = [c for c in r.vcurves if c.short or c.reduced]
+        self.vc_status.setText(f"{len(r.pvis)} points, {n} vertical curve(s)"
+                               + (" (proposed by the app)" if self._pvis_auto else " (your points)")
+                               + (f". \u26a0 {len(bad)} curve(s) need attention (see Result)." if bad else "."))
+
     def _parse_targets(self):
         out = []
         for line in self.targets.toPlainText().splitlines():
@@ -779,7 +986,9 @@ class PlanPanel(QWidget):
             pavement_t=self.r_pave.value(), soil=self.r_soil.currentData(), cut_ratio=self.r_cut.value(),
             fill_ratio=self.r_fill.value(), swell_pct=self.swell.value(), shrink_pct=self.shrink.value(),
             truck_m3=self.truck.value(), radii=self.curve_radii(), standard=self.r_std.currentData() or "",
-            min_radius=rdm.STANDARDS.get(self.r_std.currentData() or "", {}).get("min_radius", 0.0))
+            min_radius=rdm.STANDARDS.get(self.r_std.currentData() or "", {}).get("min_radius", 0.0),
+            vcurves=self.vc_yes.isChecked(), speed=int(self.vc_speed.currentData() or 30),
+            pvis=[list(q) for q in self._pvis] if not self._pvis_auto else [], pvis_auto=self._pvis_auto)
 
     def _p_soil(self, lay):
         g = QGridLayout()
@@ -877,7 +1086,8 @@ class PlanPanel(QWidget):
         nxt = self.steps()[self.idx + 1] if not last else ""
         short = {"draw": "Draw the road line" if self.kind == "road" else "Draw the area", "height": "Height",
                  "edges": "Edges", "ref": "Measure from", "soil": "Soil and trucks", "stations": "Stations",
-                 "rise": "Road height", "shape": "Road shape", "curves": "Curves"}
+                 "rise": "Road height", "shape": "Road shape", "curves": "Curves",
+                 "vcurves": "Grade changes"}
         self.next_btn.setText(("See the results" if nxt == "result" else f"Next: {short.get(nxt, '')}") + "  ›"
                               if nxt else "")
         if key == "draw":
@@ -896,6 +1106,9 @@ class PlanPanel(QWidget):
             self._station_text()
         if key == "rise":
             self._start_text()
+        if key == "vcurves":
+            self._vc_speed_default()
+            self._fill_k_table()
         if key == "shape":
             self.preview.set_design(self.road_design())
         if key == "height":
@@ -960,6 +1173,9 @@ class PlanPanel(QWidget):
                                                     f"start at {self.start_z.value():.2f} m") +
                          ", " + (b.text().lower() if b else "") +
                          (f" ({self.max_grade.value():g}%)" if b and b.property("key") == "gentle" else ""))
+        if "vcurves" in steps:
+            lines.append(f"\u2714 Vertical curves for {self.vc_speed.currentData()} km/h"
+                         if self.vc_yes.isChecked() else "\u2714 No vertical curves")
         if "shape" in steps:
             std = rdm.STANDARDS.get(self.r_std.currentData() or "")
             lines.append(f"\u2714 Road {self.r_width.value():g} m" + (" (DPWH)" if std else "") +
@@ -1179,6 +1395,7 @@ class PlanPanel(QWidget):
         self.takeoff = t
         if self.kind == "road":
             self.page.show_road(t)
+            self._show_vcurves(t)
         else:
             self.page.show_overlay(t)
         self._show()
@@ -1510,9 +1727,21 @@ class PlanPanel(QWidget):
         self.swell.setValue(rd.swell_pct)
         self.shrink.setValue(rd.shrink_pct)
         self.truck.setValue(rd.truck_m3)
+        (self.vc_yes if rd.vcurves else self.vc_no).setChecked(True)
+        i = self.vc_speed.findData(int(rd.speed))
+        self.vc_speed.blockSignals(True)
+        self.vc_speed.setCurrentIndex(max(0, i))
+        self.vc_speed.blockSignals(False)
+        self._vc_speed_set = True
+        self._pvis_auto = rd.pvis_auto or len(rd.pvis) < 2
+        self._pvis = [list(q) + [0.0] * (3 - len(q)) for q in rd.pvis]
+        if self._pvis:
+            self._fill_pvis(self._pvis)
 
     def new_plan(self):
         self.name, self.plan_path, self.takeoff = "", "", None
+        self._pvis_auto, self._pvis, self._vc_speed_set = True, [], False
+        self.vc_yes.setChecked(True)
         self.page._clear()
         self.go(0)
 

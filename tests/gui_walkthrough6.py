@@ -129,4 +129,15 @@ outs = sorted(os.listdir(os.path.join(tmp, "converted")))
 print("converted:", outs)
 assert "lots_EPSG4326.shp" in outs and "roads_EPSG4326.shp" in outs and "conversion_notes.txt" in outs
 shot(w, "65_convert_done")
+
+# How things are computed
+w.show_page(w.methods)
+w.methods.show_topic("road")
+shot(w, "66_methods_road")
+w.methods.search.setText("HAND")
+app.processEvents()
+assert not w.methods.list.item(2).isHidden()          # flood topic matches
+pdf = w.methods.save_pdf(os.path.join(tmp, "methods.pdf"))
+assert pdf and os.path.getsize(pdf) > 20000, pdf
+print("methods pdf", os.path.getsize(pdf))
 print("OK")

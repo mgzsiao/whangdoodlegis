@@ -263,7 +263,36 @@ def section_image(t: ew.Takeoff, outline, width: int = 1600, height: int = 560) 
 
 
 # ============================================================================ tables
-def write_xlsx(path: str, title: str, meta: list, q: list, inp: list, spots: list, notes: list) -> str:
+def worked_example(t: ew.Takeoff, qty: list) -> list[str]:
+    """Step-by-step check with this plan's numbers (plain text paragraphs)."""
+    out = []
+    cell_a = abs(t.transform.a * t.transform.e)
+    dz = t.dz[np.isfinite(t.dz)]
+    n_c, n_f = int((dz > 0).sum()), int((dz < 0).sum())
+    out.append(f"Grid method (used for the totals): the ground worked is split into {dz.size:,} cells of "
+               f"{abs(t.transform.a):.2f} \u00d7 {abs(t.transform.e):.2f} m = {cell_a:.4f} m\u00b2. In each cell, "
+               f"depth = ground now \u2212 finished level. Dig = sum of the positive depths \u00d7 cell area = "
+               f"{float(dz[dz > 0].sum()):,.2f} m \u00d7 {cell_a:.4f} m\u00b2 = {float(dz[dz > 0].sum()) * cell_a:,.2f} m\u00b3 "
+               f"({n_c:,} cells). Fill = {float(-dz[dz < 0].sum()):,.2f} m \u00d7 {cell_a:.4f} m\u00b2 = "
+               f"{float(-dz[dz < 0].sum()) * cell_a:,.2f} m\u00b3 ({n_f:,} cells).")
+    body = [r for r in qty if r[0][:1].isdigit()]
+    if len(body) > 1:
+        i = max(range(1, len(body)), key=lambda k: float(body[k][4]) + float(body[k][5]))
+        a, b = body[i - 1], body[i]
+        out.append(f"End-area check between sections {a[0]} and {b[0]}: L = {b[1]} m. Cut V = (A1 + A2) / 2 \u00d7 L = "
+                   f"({a[2]} + {b[2]}) / 2 \u00d7 {b[1]} = {b[4]} m\u00b3; fill V = ({a[3]} + {b[3]}) / 2 \u00d7 "
+                   f"{b[1]} = {b[5]} m\u00b3. The end-area totals differ a little from the grid totals because "
+                   "sections only sample the ground every few metres.")
+    if t.kind == "pad":
+        h = t.haul
+        out.append(f"Soil needed for the fill = fill \u00d7 (1 + shrink) = {t.fill:,.2f} \u00d7 "
+                   f"{1 + h.shrink_pct / 100:.2f} = {h.needed:,.2f} m\u00b3. Truck trips = loose volume \u00f7 truck "
+                   f"size, rounded up; loose volume = volume \u00d7 (1 + swell {h.swell_pct:g}%).")
+    return out
+
+
+def write_xlsx(path: str, title: str, meta: list, q: list, inp: list, spots: list, notes: list, qty=(),
+               worked=()) -> str:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     wb = Workbook()
@@ -311,6 +340,24 @@ def write_xlsx(path: str, title: str, meta: list, q: list, inp: list, spots: lis
             if c >= 2:
                 cell.number_format = "0.000"
     wg.freeze_panes = "A2"
+    if qty:
+        from .pad_sections import QTY_HEADER
+        wq = wb.create_sheet("Quantities by section")
+        for c, h in enumerate(QTY_HEADER, 1):
+            wq.cell(1, c, h).font = head
+            wq.cell(1, c).fill = fill
+            wq.column_dimensions[chr(64 + c)].width = 24 if c == 1 else 16
+        for i, row in enumerate(qty, 2):
+            for c, v in enumerate(row, 1):
+                try:
+                    wq.cell(i, c, float(v) if c > 1 and v != "" else v)
+                except ValueError:
+                    wq.cell(i, c, v)
+    if worked:
+        ww = wb.create_sheet("Worked example")
+        ww.column_dimensions["A"].width = 130
+        for i, tx in enumerate(worked, 1):
+            ww.cell(i, 1, tx).alignment = Alignment(wrap_text=True, vertical="top")
     wn = wb.create_sheet("Notes")
     wn.column_dimensions["A"].width = 120
     for i, n in enumerate(notes, 1):
@@ -382,7 +429,8 @@ def _table(rows, widths=("45%", "25%", "30%"), header=None, big=False) -> str:
 
 
 def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quality: list, files: list,
-                map_size=(1000, 800)) -> str:
+                map_size=(1000, 800), sec=None) -> str:
+    """sec: dict(sizes=[(w, h)], qty=rows, step=m, along=text, worked=[text]) for the cross-section pages."""
     name = html.escape(plan.get("name", "Earthworks"))
     kind = ew.TYPES.get(t.kind, t.kind)
     h = t.haul
@@ -423,6 +471,32 @@ def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quali
         'deeper. Amber line = the outline.</p>',
         '<h2 style="font-size:12pt; margin-top:10px;">Side view</h2>',
         '<p><img src="section.png" width="520" height="182"></p>',
+    ]
+    if sec and sec.get("sizes"):
+        parts.append('<h2 style="font-size:12pt; page-break-before: always;">Quantities by section</h2>')
+        parts.append(_table(sec["qty"], ("26%", "14%", "15%", "15%", "15%", "15%"),
+                            header=("Section", "Distance m", "Cut area m²", "Fill area m²", "Cut volume m³",
+                                    "Fill volume m³")))
+        parts.append(f'<p style="color:#5D677A; font-size:8pt;">Sections every {sec["step"]:g} m along the lot '
+                     f'({html.escape(sec["along"])}), each one across it. Volumes between sections by the average '
+                     'end-area method as a check; the plan totals use the finer grid method.</p>')
+        for k, (sw, sh) in enumerate(sec["sizes"]):
+            parts.append(f'<h2 style="font-size:12pt; page-break-before: always;">Cross-sections'
+                         f'{" (continued)" if k else ""}</h2>')
+            if not k:
+                parts.append('<p style="color:#5D677A; font-size:8pt;">Looking along the lot; offsets in metres from '
+                             'the middle line, true scale. Brown = ground now, navy = finished ground and sides, red = '
+                             'dig, blue = fill. The box gives each section\'s areas and the volumes since the '
+                             'previous section.</p>')
+            parts.append(f'<p><img src="sections{k}.png" width="520" height="{int(round(520 * sh / sw))}"></p>')
+    if sec and sec.get("worked"):
+        parts.append('<h2 style="font-size:12pt; page-break-before: always;">How the numbers were computed '
+                     '(worked example)</h2>')
+        parts.append('<p style="font-size:8.5pt;">The totals recomputed by hand with this plan\'s numbers. The full '
+                     'methods are in the app under \u201cHow things are computed\u201d.</p>')
+        for tx in sec["worked"]:
+            parts.append(f'<p style="font-size:8.5pt;">\u2022 {html.escape(tx)}</p>')
+    parts += [
         '<h2 style="font-size:12pt; page-break-before: always;">Design inputs</h2>',
         _table(inp, ("40%", "60%")),
         '<h2 style="font-size:12pt; margin-top:14px;">Data quality</h2>',
@@ -535,8 +609,18 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
             files += ex.export_raster(p, base + "_dig_fill_map", ["png"], dst_crs, kind="classes", lonlat=lonlat)
 
         progress(55, "Tables")
+        sec_imgs, qty, step, along = [], [], 0.0, ""
+        if t.kind == "pad":
+            from . import pad_sections
+            design = ew.PadDesign(**{k: v for k, v in (plan.get("design") or {}).items()
+                                     if k in ew.PadDesign.__dataclass_fields__})
+            sec_imgs, qty, step, along = pad_sections.sheets(t, outline, design)
+        worked = worked_example(t, qty)
         files.append(write_xlsx(base + "_quantities.xlsx", title, meta, q, inp, spots,
-                                list(EARTHWORKS_NOTES + DISCLAIMER_PARAGRAPHS)))
+                                list(EARTHWORKS_NOTES + DISCLAIMER_PARAGRAPHS), qty, worked))
+        if qty:
+            from .pad_sections import QTY_HEADER
+            files.append(write_csv(base + "_quantities_by_section.csv", QTY_HEADER, qty))
         files.append(write_csv(base + "_quantities.csv", ("Quantity", "Value", "Note"), q))
         files.append(write_csv(base + "_spot_levels.csv", ("Point", "Easting_m", "Northing_m", "Ground_m",
                                                            "Finished_m", "Dig+_Fill-_m"), spots))
@@ -567,8 +651,10 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
         listed = [f for f in dict.fromkeys([pdf_path] + files + [readme])
                   if not f.lower().endswith((".aux.xml", ".pgw", ".wld", ".jgw", ".tfw"))]
         progress(85, "PDF report")
-        write_pdf(pdf_path, report_html(t, plan, meta, q, inp, quality, listed, mimg.size),
-                  {"map.png": mimg, "section.png": simg})
+        sec = dict(sizes=[im.size for im in sec_imgs], qty=qty, step=step, along=along, worked=worked)
+        imgs = {"map.png": mimg, "section.png": simg}
+        imgs.update({f"sections{k}.png": im for k, im in enumerate(sec_imgs)})
+        write_pdf(pdf_path, report_html(t, plan, meta, q, inp, quality, listed, mimg.size, sec), imgs)
         files.insert(0, pdf_path)
         ex.write_export_readme(readme, f"{APP_NAME} {title}", dst_crs, lonlat, files, notes)
         files.append(readme)

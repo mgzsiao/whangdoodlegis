@@ -175,7 +175,16 @@ def test_export_package(tilted, tmp_path):
     assert layers == {"outline", "cut_fill_zones", "spot_levels"}
     from openpyxl import load_workbook
     wb = load_workbook(tmp_path / "pkg" / "Barangay_hall_pad_quantities.xlsx")
-    assert wb.sheetnames == ["Summary", "Inputs", "Spot levels", "Notes"]
+    assert wb.sheetnames == ["Summary", "Inputs", "Spot levels", "Quantities by section", "Worked example", "Notes"]
+    qs = wb["Quantities by section"]
+    last = [c.value for c in qs[qs.max_row]]
+    assert last[0] == "Plan totals (grid method)"
+    check = [c.value for c in qs[qs.max_row - 1]]
+    assert check[0].startswith("TOTAL")
+    # the end-area check agrees with the grid totals within 5 %
+    for i in (4, 5):
+        if last[i] > 1:
+            assert abs(check[i] - last[i]) / last[i] < 0.05, (check, last)
     assert wb["Spot levels"].max_row > 30
     with rasterio.open(tmp_path / "pkg" / "Barangay_hall_pad_dig_fill_depth_m.tif") as ds:
         dz = ds.read(1, masked=True)

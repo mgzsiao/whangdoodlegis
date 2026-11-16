@@ -143,6 +143,25 @@ def road_dxf(path: str, r, name: str, vex: float = 10.0) -> str:
     for s in st:
         y = oy + (s.design - z0) * vex
         d.line((ox + s.s, oy), (ox + s.s, y), "PROFILE_STATIONS", GREY)
+    # vertical curves: PVI / PVC / PVT marks, grade labels
+    pv = [(float(p[0]), float(p[1])) for p in getattr(r, "pvis", [])]
+    if pv:
+        d.poly([(ox + a, oy + (b - z0) * vex) for a, b in pv], "PROFILE_TANGENTS", GREY)
+        for (a0, b0), (a1, b1) in zip(pv, pv[1:]):
+            g = (b1 - b0) / max(a1 - a0, 1e-9) * 100
+            xm, ym = (a0 + a1) / 2, (b0 + b1) / 2
+            d.text((ox + xm, oy + (ym - z0) * vex + 1.5 * th), th, f"{g:+.2f}%", "PROFILE_VCURVES", GREEN,
+                   align="center")
+    for c in getattr(r, "vcurves", []):
+        if c.length <= 0:
+            continue
+        for lab, a, b in (("PVC", c.pvc_s, c.pvc_z), ("PVI", c.pvi_s, c.pvi_z), ("PVT", c.pvt_s, c.pvt_z)):
+            p = (ox + a, oy + (b - z0) * vex)
+            d.point((p[0], p[1], 0.0), "PROFILE_VCURVES", MAGENTA)
+            d.text((p[0], p[1] - 2.2 * th), th * 0.8, f"{lab}{c.n} {station_label(a)} {b:.3f}", "PROFILE_VCURVES",
+                   MAGENTA, rot=90)
+        d.text((ox + c.pvi_s, oy + (c.pvi_z - z0) * vex + 3 * th), th * 0.8,
+               f"L={c.length:.1f} K={c.k:.1f} {c.kind}", "PROFILE_VCURVES", MAGENTA, align="center")
     # ---- cross-section sheets under the profile (true scale)
     cols = 4
     widths = [max(abs(s.offsets[0]), abs(s.offsets[-1])) for s in st if s.offsets is not None] or [10]

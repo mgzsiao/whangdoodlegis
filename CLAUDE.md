@@ -149,6 +149,29 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
   - 3-D export `core/model3d.py` (.dae textured from DSM + ortho, .stl; moved near the origin, README has
     the offset). Button in Measure panel; CLI `model3d`. CLI `plan` reruns a saved plan and writes the package.
   - Tests: `tests/test_exports_cad.py`; walkthroughs 3 and 5 cover compare, 3-D, curves, DPWH, mass haul.
+- 1.1.0 (owner's change list of 2026-11-16, asked item by item before building):
+  - "Support the Developer": small link under the version text in the navigation footer + button in the About box.
+  - Georeferencer "Point the grid myself" (Grid tab): click >= 4 grid crossings, type coordinates; clicks are
+    fine-tuned onto the crossing (`core/georef_manual.py`: short vertical + horizontal strokes, diagonal lines
+    ignored); values suggested after 3 crossings. `core/georef.py` unchanged. MGB map: RMSE 0.86 m (walkthrough 7).
+  - "Use my own files" (DTM / DSM / ortho made elsewhere) on Flood & landslide and Measure & earthworks
+    (`core/filesets.py`, `gui/own_files.py`): offline only, refuses without an elevation model, converts
+    lat/lon or feet to UTM metres into `<jobs_root>/Own files/<name>`; listed in Jobs as "Own files"; source
+    lists grouped "Drone jobs processed in this app" / "My own files".
+  - "Convert files" screen (`core/convert.py`, `gui/convert_page.py`): vectors + rasters to any CRS, asks the
+    CRS when .prj is missing, ESRI PRS92/Luzon names mapped to EPSG (official shifts), conversion_notes.txt.
+  - Vertical curves (`core/vertical.py`): PVIs proposed from the road height (Douglas-Peucker 0.10 m, >= 20 m
+    apart), editable in the guided step "Smooth the grade changes?"; symmetric parabolas, L = max(K|A|, 0.6 V)
+    with AASHTO 2018 K values (Tables 3-35 / 3-37; owner approved, reference table shown in app + report);
+    LandXML ParaCurve, DXF PVC/PVI/PVT labels, report table.
+  - Report cross-sections (`core/xsection_draw.py`): true scale, grid, slope labels, centre elevations, a box
+    with each section's areas / volumes; packed as many per A4 page as fit. Road: "Quantities by station"
+    table. Lot/pad: sections along the lot (`core/pad_sections.py`, up to 20) with an end-area check against
+    the grid totals. Both reports end with a worked example using the plan's own numbers.
+  - Help > "How things are computed" (`core/methods.py`, `gui/methods_page.py`): one page per process with
+    formulas and sources, searchable, Save as PDF. Keep it in step with the code.
+  - Tests: test_filesets, test_convert, test_georef_manual, test_vertical; walkthroughs 6 (own files, convert,
+    methods) and 7 (manual grid).
 - The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.
 - Next stages (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,

@@ -11,7 +11,8 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .. import APP_NAME, DISCLAIMER_PARAGRAPHS
-from . import earthworks as ew, earthworks_report as er, exporters as ex, road as rdm
+from . import earthworks as ew, earthworks_report as er, exporters as ex, road as rdm, vertical as vt
+from . import xsection_draw as xd
 from .earthworks_report import AMBER, CUT_RGB, FILL_RGB, GROUND_RGB, INK, MUTED, NAVY, _font, ms_nice
 
 ROAD_NOTES = (
@@ -89,6 +90,67 @@ def mass_haul_image(r: rdm.RoadResult, width=1800, height=520) -> Image.Image:
     dr.text((width - 900, 18), "above zero: more dug than needed so far · circles: balance points",
             font=f, fill=MUTED)
     return im
+
+
+QTY_HEADER = ("Station", "Distance (m)", "Cut area (m²)", "Fill area (m²)", "Cut volume (m³)", "Fill volume (m³)")
+
+
+def quantity_rows(r: rdm.RoadResult, total: bool = True) -> list[tuple]:
+    """Per station: distance from the previous station, cut / fill areas, volumes since the previous station
+    (average end-area)."""
+    out, prev = [], None
+    for s in r.stations:
+        dist = 0.0 if prev is None else s.s - prev
+        out.append((s.label, f"{dist:.2f}", f"{s.cut_area:.2f}", f"{s.fill_area:.2f}", f"{s.cut_vol:.2f}",
+                    f"{s.fill_vol:.2f}"))
+        prev = s.s
+    if total:
+        out.append(("TOTAL", f"{r.length:.2f}", "", "", f"{r.cut:.2f}", f"{r.fill:.2f}"))
+    return out
+
+
+def worked_example(r: rdm.RoadResult, shrink_pct: float) -> list[str]:
+    """Step-by-step check of one line of the tables with this road's numbers (plain text paragraphs)."""
+    st = r.stations
+    out = []
+    if len(st) > 1:
+        i = max(range(1, len(st)), key=lambda k: st[k].cut_vol + st[k].fill_vol)
+        a, b = st[i - 1], st[i]
+        L = b.s - a.s
+        out.append(f"Volume between {a.label} and {b.label} (average end-area). Distance L = {b.s:.2f} − {a.s:.2f} "
+                   f"= {L:.2f} m. Cut: V = (A1 + A2) / 2 × L = ({a.cut_area:.2f} + {b.cut_area:.2f}) / 2 × {L:.2f} "
+                   f"= {b.cut_vol:.2f} m³. Fill: V = ({a.fill_area:.2f} + {b.fill_area:.2f}) / 2 × {L:.2f} = "
+                   f"{b.fill_vol:.2f} m³.")
+        k = 1 + shrink_pct / 100
+        out.append(f"Running balance at {b.label}: cut so far − fill so far × (1 + shrink) = {b.cum_cut:,.2f} − "
+                   f"{b.cum_fill:,.2f} × {k:.2f} = {b.mass:,.2f} m³ (positive: soil to spare so far).")
+        out.append(f"Cut and fill areas at {b.label}: the strip between the ground and the finished section is "
+                   f"added up across the section in {r.cell:.2f} m steps (trapezoids), from where the left side "
+                   f"meets the ground ({b.left_catch:.2f} m) to the right ({b.right_catch:+.2f} m). Ground "
+                   f"{b.ground:.3f} m, finished road {b.design:.3f} m at the centre: "
+                   f"{'dig' if b.depth > 0 else 'fill'} {abs(b.depth):.3f} m there.")
+    c = next((c for c in r.vcurves if c.length > 0), None)
+    if c is not None:
+        sx = next((s for s in st if c.pvc_s < s.s < c.pvt_s), None)
+        x = (sx.s if sx else c.pvi_s) - c.pvc_s
+        z = c.pvc_z + c.g1 / 100 * x + c.a / 100 * x * x / (2 * c.length)
+        where = sx.label if sx else rdm.station_label(c.pvi_s)
+        out.append(f"Road height on vertical curve {c.n} at {where}: grades g1 = {c.g1:+.3f}% and g2 = {c.g2:+.3f}% "
+                   f"meet at the PVI {rdm.station_label(c.pvi_s)} ({c.pvi_z:.3f} m); A = g2 − g1 = {c.a:+.3f}%, "
+                   f"L = {c.length:.2f} m, K = L / |A| = {c.k:.2f} (needs {c.k_min:g} at {r.speed} km/h). "
+                   f"PVC at {rdm.station_label(c.pvc_s)}, elevation {c.pvi_z:.3f} − {c.g1:+.3f}% × {c.length / 2:.2f}"
+                   f" = {c.pvc_z:.3f} m. x = {x:.2f} m after the PVC: z = z_PVC + g1·x + A·x² / (200·L) = "
+                   f"{c.pvc_z:.3f} + {c.g1 / 100:+.5f} × {x:.2f} + {c.a:+.3f} × {x:.2f}² / (200 × {c.length:.2f}) = "
+                   f"{z:.3f} m.")
+    return out
+
+
+def vcurve_html_rows(r: rdm.RoadResult) -> list[tuple]:
+    out = []
+    for row in vt.rows(r.vcurves, rdm.station_label):
+        out.append((row[0], row[1], row[2], f"{row[3]:.3f}", f"{row[4]:+.2f}", f"{row[5]:+.2f}", f"{row[7]:.1f}",
+                    row[8], row[9], row[10], row[12], row[15]))
+    return out
 
 
 def station_rows(r: rdm.RoadResult) -> list[tuple]:
@@ -171,7 +233,8 @@ def profile_image(r: rdm.RoadResult, width=1800, height=620, mark: float | None 
     if len(seg) > 1:
         dr.line(seg, fill=GROUND_RGB, width=4)
     dr.line([P(a, b) for a, b in zip(d, z)], fill=NAVY, width=5)
-    # grade labels between bends of the road height
+    if r.pvis:
+        _profile_vertical(dr, r, P, f, fb)
     sd = np.array([s.s for s in r.stations])
     sz = np.array([s.design for s in r.stations])
     gr = np.diff(sz) / np.maximum(np.diff(sd), 1e-9) * 100
@@ -180,8 +243,7 @@ def profile_image(r: rdm.RoadResult, width=1800, height=620, mark: float | None 
         if i == len(gr) or abs(gr[i] - gr[a]) > 1.0:
             runs.append((a, i))
             a = i
-    last_x = -1e9
-    for a, b in sorted(runs, key=lambda ab: sd[ab[1]] - sd[ab[0]], reverse=True)[:10]:
+    for a, b in ([] if r.pvis else sorted(runs, key=lambda ab: sd[ab[1]] - sd[ab[0]], reverse=True)[:10]):
         if sd[b] - sd[a] < 0.06 * dmax:
             continue
         gg = (sz[b] - sz[a]) / max(sd[b] - sd[a], 1e-9) * 100
@@ -203,79 +265,75 @@ def profile_image(r: rdm.RoadResult, width=1800, height=620, mark: float | None 
     return im
 
 
-def section_image(st: rdm.Station, width=860, height=420, vex: float = 1.0) -> Image.Image:
-    im = Image.new("RGB", (width, height), "white")
-    dr = ImageDraw.Draw(im)
-    o, g, d = st.offsets, st.ground_xs, st.design_xs
-    f, fb = _font(22), _font(26, True)
-    dr.text((14, 6), f"{st.label}", font=fb, fill=INK)
-    dr.text((150, 10), f"dig {st.cut_area:.2f} m²  fill {st.fill_area:.2f} m²  centre {st.depth:+.2f} m",
-            font=f, fill=MUTED)
-    if o is None or not np.isfinite(g).any():
-        return im
-    zs = np.concatenate([g[np.isfinite(g)], d[np.isfinite(d)]])
-    z0, z1 = float(zs.min()), float(zs.max())
-    span_o = float(o[-1] - o[0]) or 1.0
-    L, R, T, B = 80, 16, 48, 40
-    pw, ph = width - L - R, height - T - B
-    # heights exaggerated (up to 5x) so low sections stay readable; the factor is printed
-    sx = pw / span_o
-    sc = min(ph * 0.8 / max(z1 - z0, 0.3), 5 * sx)
-    sc = max(sc, sx)
-    vex = sc / sx
-    zc = (z0 + z1) / 2
-    if vex > 1.05:
-        dr.text((width - 190, T + 2), f"heights x{vex:.1f}", font=f, fill=MUTED)
-
-    def P(oi, zi):
-        return (L + (oi - o[0]) / span_o * pw, T + ph / 2 - (zi - zc) * sc)
-    for k in range(-2, 3):
-        zz = zc + k * ph / 4 / sc
-        y = T + ph / 2 - k * ph / 4
-        dr.line([(L, y), (L + pw, y)], fill=(232, 235, 241))
-        dr.text((4, y - 12), f"{zz:.1f}", font=f, fill=MUTED)
-    for oo in np.arange(math.ceil(o[0] / 5) * 5, o[-1] + 1e-9, 5):
-        X = P(oo, zc)[0]
-        dr.line([(X, T + ph), (X, T + ph + 5)], fill=MUTED)
-        dr.text((X - 12, T + ph + 6), f"{oo:g}", font=f, fill=MUTED)
-    for i in range(len(o) - 1):
-        if not (np.isfinite(g[i]) and np.isfinite(d[i])):
+def _profile_vertical(dr, r, P, f, fb):
+    """Grade lines between the PVIs (dashed), PVI / PVC / PVT marks and grade labels."""
+    pv = [(float(p[0]), float(p[1])) for p in r.pvis]
+    for (a0, b0), (a1, b1) in zip(pv, pv[1:]):
+        xa, ya = P(a0, b0)
+        xb, yb = P(a1, b1)
+        n = max(1, int(math.hypot(xb - xa, yb - ya) / 18))
+        for k in range(0, n, 2):
+            t0, t1 = k / n, min(1.0, (k + 1) / n)
+            dr.line([(xa + (xb - xa) * t0, ya + (yb - ya) * t0), (xa + (xb - xa) * t1, ya + (yb - ya) * t1)],
+                    fill=(120, 130, 150), width=2)
+        g = (b1 - b0) / max(a1 - a0, 1e-9) * 100
+        X, Y = P((a0 + a1) / 2, (b0 + b1) / 2)
+        txt = f"{g:+.2f}%"
+        dr.text((X - dr.textlength(txt, font=fb) / 2, Y - 44), txt, font=fb, fill=(24, 130, 70))
+    for c in r.vcurves:
+        X, Y = P(c.pvi_s, c.pvi_z)
+        dr.polygon([(X, Y - 10), (X - 9, Y + 6), (X + 9, Y + 6)], outline=INK, fill=(255, 255, 255))
+        if c.length <= 0:
             continue
-        xa, xb = P(o[i], 0)[0], P(o[i + 1], 0)[0]
-        ya, yb = P(0, g[i])[1], P(0, d[i])[1]
-        if abs(ya - yb) < 0.5:
+        for lab, s_, z_ in (("PVC", c.pvc_s, c.pvc_z), ("PVT", c.pvt_s, c.pvt_z)):
+            x_, y_ = P(s_, z_)
+            dr.line([(x_, y_ - 16), (x_, y_ + 16)], fill=(160, 40, 140), width=3)
+        lab = f"VC{c.n}  L {c.length:.0f} m  K {c.k:.1f}"
+        dr.text((X - dr.textlength(lab, font=f) / 2, Y + 14), lab, font=f, fill=(160, 40, 140))
+
+
+def vcurve_image_note(r) -> str:
+    return ("Dashed: straight grades between the grade change points (PVI, triangles); purple ticks: start (PVC) "
+            "and end (PVT) of each vertical curve.") if r.pvis else ""
+
+
+def section_data(r: rdm.RoadResult, rd: rdm.RoadDesign | None = None) -> list[xd.SectionData]:
+    rd = rd or rdm.RoadDesign()
+    out, prev = [], None
+    w2 = rd.width / 2
+    for s in r.stations:
+        if s.offsets is None:
+            prev = s.s
             continue
-        col = CUT_RGB if g[i] > d[i] else FILL_RGB
-        dr.rectangle([xa, min(ya, yb), max(xb, xa + 1), max(ya, yb)],
-                     fill=tuple(int(c * 0.35 + 255 * 0.65) for c in col))
-    gp = [P(a, b) for a, b in zip(o, g) if np.isfinite(b)]
-    if len(gp) > 1:
-        dr.line(gp, fill=GROUND_RGB, width=3)
-    seg = []
-    for a, b in zip(o, d):
-        if np.isfinite(b):
-            seg.append(P(a, b))
-        elif len(seg) > 1:
-            dr.line(seg, fill=NAVY, width=4)
-            seg = []
-    if len(seg) > 1:
-        dr.line(seg, fill=NAVY, width=4)
-    X = P(0, zc)[0]
-    dr.line([(X, T), (X, T + ph)], fill=(200, 205, 215), width=1)
-    return im
+        dist = 0.0 if prev is None else s.s - prev
+        prev = s.s
+        info = [("Distance from last", f"{dist:.2f} m"),
+                ("Dig area", f"{s.cut_area:.2f} m²"), ("Fill area", f"{s.fill_area:.2f} m²"),
+                ("Dig volume since last", f"{s.cut_vol:.2f} m³"), ("Fill volume since last", f"{s.fill_vol:.2f} m³"),
+                ("Finished level", f"{s.design:.3f} m")]
+        if s.ground == s.ground:
+            info += [("Ground level", f"{s.ground:.3f} m"),
+                     ("On grade at centre" if abs(s.depth) < 0.0005 else
+                      "Dig at centre" if s.depth > 0 else "Fill at centre", f"{abs(s.depth):.3f} m")]
+        slopes = []
+        for sign in (-1, 1):
+            slopes.append((0, sign * w2, xd.slope_text(rd.crown_pct)))
+            if rd.shoulders:
+                slopes.append((sign * w2, sign * rd.half, xd.slope_text(rd.shoulder_pct)))
+            catch = s.right_catch if sign > 0 else s.left_catch
+            zh = np.interp(sign * rd.half, s.offsets, np.where(np.isfinite(s.design_xs), s.design_xs, np.nan))
+            gh = np.interp(sign * rd.half, s.offsets, s.ground_xs)
+            cut = bool(np.isfinite(gh) and np.isfinite(zh) and gh > zh)
+            start = rd.half + (rd.ditch_d + rd.ditch_w if cut and rd.ditch else 0.0)
+            if abs(catch) > start + 0.5:
+                slopes.append((sign * start, catch, xd.ratio_text(rd.cut_ratio if cut else rd.fill_ratio, cut)))
+        out.append(xd.SectionData(f"STA. {s.label}", s.offsets, s.ground_xs, s.design_xs, s.ground, s.design,
+                                  info, slopes))
+    return out
 
 
-def sections_sheets(r: rdm.RoadResult, per_page: int = 8) -> list[Image.Image]:
-    imgs = [section_image(s) for s in r.stations]
-    pages = []
-    for k in range(0, len(imgs), per_page):
-        chunk = imgs[k:k + per_page]
-        w, h = chunk[0].size
-        sheet = Image.new("RGB", (2 * w + 20, 4 * h + 30), "white")
-        for i, im in enumerate(chunk):
-            sheet.paste(im, ((i % 2) * (w + 20), (i // 2) * (h + 10)))
-        pages.append(sheet)
-    return pages
+def sections_sheets(r: rdm.RoadResult, rd: rdm.RoadDesign | None = None) -> list[Image.Image]:
+    return xd.pages(xd.panels(section_data(r, rd)))
 
 
 def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max_px: int = 1800) -> Image.Image:
@@ -349,7 +407,7 @@ def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max
 
 
 # ============================================================================ files
-def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=()):
+def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=(), vrows=(), qty=(), worked=()):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     wb = Workbook()
@@ -380,6 +438,23 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=
     wst.row_dimensions[1].height = 45
     if curves:
         table(wb.create_sheet("Curves"), rdm.CURVE_HEADER, curves, 1, [8, 15, 15, 13, 11, 13, 14, 13, 16, 15, 15, 8])
+    if qty:
+        wq = wb.create_sheet("Quantities by station")
+        table(wq, QTY_HEADER, qty, 1, [12, 13, 14, 14, 16, 16])
+        wq.freeze_panes = "A2"
+    if vrows:
+        table(wb.create_sheet("Vertical curves"), vt.ROW_HEADER, vrows, 1,
+              [7, 9, 12, 14, 12, 12, 9, 11, 9, 9, 12, 14, 12, 14, 14, 26])
+        wk = wb.create_sheet("K values (AASHTO 2018)")
+        table(wk, ("Design speed (km/h)", "Stopping sight distance (m)", "K crest", "K sag", "Minimum length (m)"),
+              [(v, a, b, c, round(vt.min_length(v), 1)) for v, (a, b, c) in vt.K_TABLE.items()], 1,
+              [18, 24, 10, 10, 18])
+        wk.cell(len(vt.K_TABLE) + 3, 1, "Source: " + vt.AASHTO_SOURCE)
+    if worked:
+        ww = wb.create_sheet("Worked example")
+        ww.column_dimensions["A"].width = 130
+        for i, t in enumerate(worked, 1):
+            ww.cell(i, 1, t).alignment = Alignment(wrap_text=True, vertical="top")
     wsx = wb.create_sheet("Cross-sections")
     table(wsx, ("Station", "Offset (m, + right)", "Ground (m)", "Design (m)"), sections, 1, [11, 18, 12, 12])
     wsx.freeze_panes = "A2"
@@ -392,7 +467,7 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=
 
 
 def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map_size, n_sections,
-                curves=()) -> str:
+                curves=(), sheet_sizes=(), worked=()) -> str:
     h = r.haul
     big = [("Dig (cut)", f"{r.cut:,.0f} m³"), ("Fill", f"{r.fill:,.0f} m³"), ("Length", f"{r.length:,.0f} m"),
            ("Steepest", f"{r.steepest:.1f} %")]
@@ -423,6 +498,8 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
               '<p style="color:#5D677A; font-size:8pt;">The strip shows the ground worked, from where the sides meet '
               'the ground on the left to the right. Red = mostly dig, blue = mostly fill.</p>',
               f"{H2}Side view</h2>", '<p><img src="profile.png" width="520" height="179"></p>',
+              (f'<p style="color:#5D677A; font-size:8pt;">{html.escape(vcurve_image_note(r))}</p>'
+               if r.pvis else ""),
               f"{H2}Earth balance (mass haul)</h2>", '<p><img src="mass.png" width="520" height="150"></p>',
               '<p style="color:#5D677A; font-size:8pt;">Where the line rises, more soil is dug than the fill needs so '
               'far; where it falls, fill uses up soil. Between two balance points (circles) the dug soil can be '
@@ -436,18 +513,49 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
         parts.append(f"{H2}Stations</h2>")
     else:
         parts.append('<h2 style="font-size:12pt; page-break-before: always;">Stations</h2>')
+    if r.vcurves:
+        parts.insert(-1, f"{H2}Vertical curves</h2>")
+        parts.insert(-1, er._table(vcurve_html_rows(r), ("5%", "7%", "9%", "9%", "8%", "8%", "7%", "6%", "7%", "9%",
+                                                         "9%", "16%"),
+                                   header=("No.", "Type", "PVI", "PVI elev. m", "g1 %", "g2 %", "L m", "K", "K needed",
+                                           "PVC", "PVT", "High / low point")))
+        parts.insert(-1, f'<p style="color:#5D677A; font-size:8pt;">Design speed {r.speed} km/h. Parabolic curves '
+                         'centred on the PVI; z = z_PVC + g1·x + (g2 − g1)·x² / (2L). Minimum K for this speed '
+                         'from the table below (L = K × |A|, at least 0.6 × speed).</p>')
+        kt = [(f"{v} km/h", f"{a} m", b, c, f"{vt.min_length(v):.0f} m") for v, (a, b, c) in vt.K_TABLE.items()]
+        parts.insert(-1, er._table(kt, ("20%", "25%", "15%", "15%", "25%"),
+                                   header=("Design speed", "Stopping sight distance", "K crest", "K sag",
+                                           "Minimum length")))
+        parts.insert(-1, f'<p style="color:#5D677A; font-size:8pt;">Reference: {html.escape(vt.AASHTO_SOURCE)}.</p>')
     rows = [(x[0], x[4] if x[4] is not None else "-", x[5], x[6] if x[6] is not None else "-", x[7], x[8],
              x[9], x[10], x[13]) for x in station_rows(r)]
     hdr = ("Station", "Ground m", "Road m", "Dig+/Fill− m", "Dig m²", "Fill m²", "Dig m³", "Fill m³", "Balance m³")
     parts.append(er._table(rows, ("12%", "11%", "11%", "12%", "9%", "9%", "11%", "11%", "14%"), header=hdr))
+    parts.append('<h2 style="font-size:12pt; page-break-before: always;">Quantities by station</h2>')
+    parts.append(er._table(quantity_rows(r), ("18%", "16%", "16%", "16%", "17%", "17%"),
+                           header=("Station", "Distance m", "Cut area m²", "Fill area m²", "Cut volume m³",
+                                   "Fill volume m³")))
+    parts.append('<p style="color:#5D677A; font-size:8pt;">Distance and volumes are from the previous station '
+                 '(average end-area: V = (A1 + A2) / 2 × L).</p>')
     for k in range(n_sections):
         parts.append(f'<h2 style="font-size:12pt; page-break-before: always;">Cross-sections'
                      f'{" (continued)" if k else ""}</h2>')
         if not k:
             parts.append('<p style="color:#5D677A; font-size:8pt;">Looking toward higher stations; offsets in metres, '
-                         'left negative. Brown = ground now, navy = finished road and sides (bottom of the pavement '
-                         'under the road).</p>')
-        parts.append(f'<p><img src="sections{k}.png" width="520" height="505"></p>')
+                         'left negative; true scale (1 m across = 1 m up). Brown = ground now, navy = finished road '
+                         'and sides (bottom of the pavement under the road), red = dig, blue = fill. Green labels: '
+                         'cross slopes and side slopes. The box beside each section gives its areas and the volumes '
+                         'since the previous station.</p>')
+        sw, sh = sheet_sizes[k] if k < len(sheet_sizes) else (1600, 1550)
+        parts.append(f'<p><img src="sections{k}.png" width="520" height="{int(round(520 * sh / sw))}"></p>')
+    if worked:
+        parts.append('<h2 style="font-size:12pt; page-break-before: always;">How the numbers were computed '
+                     '(worked example)</h2>')
+        parts.append('<p style="font-size:8.5pt;">One line of each table recomputed by hand with this road\'s '
+                     'numbers, so every other line can be trusted the same way. The full methods are in the app under '
+                     '\u201cHow things are computed\u201d.</p>')
+        for t in worked:
+            parts.append(f'<p style="font-size:8.5pt;">\u2022 {html.escape(t)}</p>')
     parts += ['<h2 style="font-size:12pt; page-break-before: always;">Design inputs</h2>', er._table(inp, ("40%", "60%")),
               f"{H2}Data quality</h2>", er._table(quality, ("40%", "60%"))]
     if files:
@@ -514,10 +622,18 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     progress(35, "Tables")
     srows, xrows = station_rows(r), section_rows(r)
     crows = rdm.curve_rows(r.alignment) if r.alignment is not None else []
+    vrows = vt.rows(r.vcurves, rdm.station_label)
+    qrows = quantity_rows(r)
+    rd = rdm.design_from(plan)
+    worked = worked_example(r, rd.shrink_pct)
     notes = list(ROAD_NOTES + DISCLAIMER_PARAGRAPHS)
-    files.append(write_workbook(base + "_quantities.xlsx", title, meta, q, inp, srows, xrows, notes, crows))
+    files.append(write_workbook(base + "_quantities.xlsx", title, meta, q, inp, srows, xrows, notes, crows, vrows,
+                                qrows, worked))
     if crows:
         files.append(er.write_csv(base + "_curves.csv", rdm.CURVE_HEADER, crows))
+    if vrows:
+        files.append(er.write_csv(base + "_vertical_curves.csv", vt.ROW_HEADER, vrows))
+    files.append(er.write_csv(base + "_quantities_by_station.csv", QTY_HEADER, qrows))
     progress(45, "Civil 3D (LandXML) and CAD drawing")
     from . import cad, landxml
     files.append(landxml.road_xml(base + "_civil3d.xml", r, plan.get("name", "Road"), dem_path))
@@ -532,7 +648,7 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     mimg = map_image(r, pts, dem_path, ortho_path)
     pimg = profile_image(r)
     himg = mass_haul_image(r)
-    sheets = sections_sheets(r)
+    sheets = sections_sheets(r, rd)
     mimg.save(base + "_map.png")
     pimg.save(base + "_side_view.png")
     himg.save(base + "_mass_haul.png")
@@ -544,7 +660,8 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     progress(75, "PDF report")
     images = {"map.png": mimg, "profile.png": pimg, "mass.png": himg}
     images.update({f"sections{k}.png": im for k, im in enumerate(sheets)})
-    er.write_pdf(pdf, report_html(r, plan, meta, q, inp, quality, listed, mimg.size, len(sheets), crows), images)
+    er.write_pdf(pdf, report_html(r, plan, meta, q, inp, quality, listed, mimg.size, len(sheets), crows,
+                                  [im.size for im in sheets], worked), images)
     files.insert(0, pdf)
     rn = list(ROAD_NOTES)
     for fmt in gis_formats:

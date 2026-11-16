@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
-from . import alignment as alm, earthworks as ew, measure as ms
+from . import alignment as alm, earthworks as ew, measure as ms, vertical as vt
 from .terrain import Dem
 
 MAX_SIDE = 60.0           # metres beyond the shoulder that a side slope is followed
@@ -84,6 +84,10 @@ class RoadDesign:
     radii: list = field(default_factory=list)        # curve radius at each bend (0 = sharp bend)
     standard: str = ""                               # "" (own values) or a key of STANDARDS
     min_radius: float = 0.0                          # for the "too tight" warning (0 = none)
+    vcurves: bool = False                            # straight grades between PVIs + parabolic vertical curves
+    speed: int = 30                                  # design speed (km/h) for the vertical curve lengths
+    pvis: list = field(default_factory=list)         # [[station, elevation, length (0 = from speed)], ...]
+    pvis_auto: bool = True                           # PVIs proposed by the app (again at every change)
 
     @property
     def half(self) -> float:
@@ -151,6 +155,9 @@ class RoadResult:
     centre: np.ndarray | None = field(default=None, repr=False)     # centre line points (curves included)
     warnings: list = field(default_factory=list)                     # (title, text)
     standard: str = ""
+    pvis: list = field(default_factory=list)                         # PVIs used [[station, elevation, length]]
+    vcurves: list = field(default_factory=list)                      # vertical.VCurve
+    speed: int = 0                                                   # design speed of the vertical curves
 
     @property
     def net(self) -> float:
@@ -419,10 +426,15 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
     dxy, dd = al.densify(max(step, 0.5))
     dg = ms.sample(dem, dxy[:, 0], dxy[:, 1])
     dz = road_heights(dd, dg, rd)
+    pvis, vcs = [], []
+    if rd.vcurves:
+        pvis = vertical_pvis(rd, dd, dz)
+        vcs = vt.build(pvis, rd.speed)
+        dz = vt.heights(dd, pvis, vcs)
     sd = np.array([s.s for s in stations])
     sx, sy = np.array([s.x for s in stations]), np.array([s.y for s in stations])
     sg = ms.sample(dem, sx, sy)
-    sz = np.interp(sd, dd, dz)
+    sz = vt.heights(sd, pvis, vcs) if rd.vcurves else np.interp(sd, dd, dz)
     for st, g, z in zip(stations, sg, sz):
         st.ground, st.design = float(g), float(z)
         section(dem, st, rd, step)
@@ -450,6 +462,12 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
     if rd.ditch:
         shape += f"; ditches in cut {rd.ditch_w:g} m wide, {rd.ditch_d:g} m deep"
     curves = ", ".join(f"R {c.radius:.0f} m" for c in al.curves) if al.curves else "none (sharp bends)"
+    if rd.vcurves:
+        nv = sum(1 for c in vcs if c.length > 0)
+        vtxt = (f"{len(pvis)} grade change points (PVIs), {nv} parabolic curve(s) for {rd.speed} km/h "
+                f"(K from {vt.AASHTO_SOURCE})" + ("" if rd.pvis_auto else "; PVIs edited by the user"))
+    else:
+        vtxt = "none (the road height follows the chosen rule station by station)"
     inputs = [("Heights from", ""),
               ("Road standard", STANDARDS[rd.standard]["label"] + f" ({DPWH_SOURCE})" if rd.standard in STANDARDS
                else "my own values"),
@@ -457,19 +475,34 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
               ("Curves", curves),
               ("Starting height", (f"ground at the start ({stations[0].design:.2f} m)" if rd.start_mode == "ground"
                                    else f"{rd.start_z:.2f} m (typed)")),
-              ("How the road rises and falls", prof), ("Road shape", shape),
+              ("How the road rises and falls", prof), ("Vertical curves", vtxt), ("Road shape", shape),
               ("Pavement and base thickness", f"{rd.pavement_t:g} m (earthworks stop below it)"),
               ("Side slopes", f"{soil}: cut {rd.cut_ratio:g} : 1, fill {rd.fill_ratio:g} : 1 (out : up)"),
               ("Soil loosening when dug (swell)", f"{rd.swell_pct:g}%"),
               ("Extra soil for packed fill (shrink)", f"{rd.shrink_pct:g}%")]
-    warn = road_warnings(al, rd, stations, grades, sd)
+    warn = road_warnings(al, rd, stations, grades, sd) + (vt.warnings(vcs, rd.speed) if rd.vcurves else [])
     return RoadResult(stations, float(sd[-1]), dd, dg, dz, cc, cf,
                       ew.make_haul(cc, cf, rd.swell_pct, rd.shrink_pct, rd.truck_m3), inputs,
                       float(abs(grades[gi])) if len(grades) else 0.0, float(sd[gi]) if len(grades) else 0.0,
                       float(np.nanmax(depth)) if np.isfinite(depth).any() else 0.0,
                       float(-np.nanmin(depth)) if np.isfinite(depth).any() else 0.0,
                       sum(s.side_limit for s in stations), int((~np.isfinite(sg)).sum()), dem.crs_wkt, dem.cell,
-                      al, cxy, warn, rd.standard)
+                      al, cxy, warn, rd.standard, pvis, vcs, rd.speed if rd.vcurves else 0)
+
+
+def vertical_pvis(rd: RoadDesign, d: np.ndarray, z: np.ndarray) -> list[list[float]]:
+    """PVIs to use: the user's (edited) list, or proposed from the chosen road height."""
+    L = float(d[-1])
+    if not rd.pvis_auto and len(rd.pvis) >= 2:
+        p = sorted([float(r[0]), float(r[1]), float(r[2]) if len(r) > 2 and r[2] else 0.0] for r in rd.pvis)
+        p = [r for r in p if -1e-6 <= r[0] <= L + 1e-6]
+        if len(p) >= 2:
+            return p
+    if rd.profile == "targets":
+        p = [[0.0, float(z[0]), 0.0]] + [[float(a), float(np.interp(a, d, z)), 0.0]
+                                         for a, _b in sorted(rd.targets) if 1.0 < float(a) < L - 1.0]
+        return p + [[L, float(z[-1]), 0.0]]
+    return vt.propose(d, z)
 
 
 def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, str]]:

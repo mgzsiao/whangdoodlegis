@@ -113,17 +113,28 @@ def road_xml(path: str, r, name: str, dem_path: str, max_points: int = 150_000) 
     gd = [f"{d:.3f} {g:.3f}" for d, g, o in zip(r.prof_d[::step], r.prof_g[::step], ok[::step]) if o]
     ET.SubElement(ET.SubElement(prof, "ProfSurf", {"name": "Existing ground"}), "PntList2D").text = " ".join(gd)
     pa = ET.SubElement(prof, "ProfAlign", {"name": f"{name} road surface"})
-    sd = np.array([st.s for st in r.stations])
-    sz = np.array([st.design for st in r.stations])
-    keep = [0]
-    for i in range(1, len(sd) - 1):        # keep the points where the grade changes (PVIs)
-        g1 = (sz[i] - sz[keep[-1]]) / max(sd[i] - sd[keep[-1]], 1e-9)
-        g2 = (sz[i + 1] - sz[i]) / max(sd[i + 1] - sd[i], 1e-9)
-        if abs(g1 - g2) > 1e-4:
-            keep.append(i)
-    keep.append(len(sd) - 1)
-    for i in keep:
-        ET.SubElement(pa, "PVI").text = f"{sd[i]:.4f} {sz[i]:.4f}"
+    if getattr(r, "pvis", None):
+        # straight grades + symmetric parabolic vertical curves (LandXML ParaCurve at the PVI)
+        lens = {round(c.pvi_s, 4): c.length for c in r.vcurves}
+        for row in r.pvis:
+            s_, z_ = float(row[0]), float(row[1])
+            L = lens.get(round(s_, 4), 0.0)
+            if L > 0:
+                ET.SubElement(pa, "ParaCurve", {"length": f"{L:.4f}"}).text = f"{s_:.4f} {z_:.4f}"
+            else:
+                ET.SubElement(pa, "PVI").text = f"{s_:.4f} {z_:.4f}"
+    else:
+        sd = np.array([st.s for st in r.stations])
+        sz = np.array([st.design for st in r.stations])
+        keep = [0]
+        for i in range(1, len(sd) - 1):        # keep the points where the grade changes (PVIs)
+            g1 = (sz[i] - sz[keep[-1]]) / max(sd[i] - sd[keep[-1]], 1e-9)
+            g2 = (sz[i + 1] - sz[i]) / max(sd[i + 1] - sd[i], 1e-9)
+            if abs(g1 - g2) > 1e-4:
+                keep.append(i)
+        keep.append(len(sd) - 1)
+        for i in keep:
+            ET.SubElement(pa, "PVI").text = f"{sd[i]:.4f} {sz[i]:.4f}"
     xss = ET.SubElement(a, "CrossSects", {"name": f"{name} sections"})
     for st in r.stations:
         if st.offsets is None:

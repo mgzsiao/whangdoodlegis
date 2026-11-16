@@ -18,6 +18,7 @@ from .convert_page import ConvertPage
 from .georef_page import GeorefPage
 from .jobs_page import JobsPage
 from .measure_page import MeasurePage
+from .methods_page import MethodsPage
 from .model_page import ModelPage
 from .pages_run import ProcessPage, ResultsPage
 from .pages_setup import CheckPage, HomePage, OptionsPage, PhotosPage
@@ -133,12 +134,13 @@ class MainWindow(QMainWindow):
         self.models = ModelPage(s)
         self.measure = MeasurePage(s)
         self.convert = ConvertPage(s)
+        self.methods = MethodsPage(s)
         self.jobs = JobsPage(s)
         ob = QPushButton("Open job folder…")
         ob.clicked.connect(self._browse_job)
         self.jobs.set_actions([ob])
         self.wizard = [self.photos, self.check, self.options, self.process, self.results]
-        for p in (self.home, *self.wizard, self.georef, self.models, self.measure, self.convert, self.jobs):
+        for p in (self.home, *self.wizard, self.georef, self.models, self.measure, self.convert, self.methods, self.jobs):
             self.stack.addWidget(p)
             p.heading_changed.connect(self._refresh_header)
         self._last_wizard = None
@@ -210,6 +212,11 @@ class MainWindow(QMainWindow):
         b = NavButton("settings", "Settings", checkable=False)
         b.clicked.connect(self.open_settings)
         v.addWidget(b)
+        section("HELP")
+        b = NavButton("help", "How things are computed")
+        b.clicked.connect(lambda: self.show_page(self.methods))
+        v.addWidget(b)
+        self.nav["methods"] = b
         v.addStretch(1)
         sep = QFrame()
         sep.setFixedHeight(1)
@@ -306,7 +313,8 @@ class MainWindow(QMainWindow):
         if page in self.wizard:
             self._last_wizard = page
         key = ("home" if page is self.home else "georef" if page is self.georef else
-               "flood" if page is self.models else "measure" if page is self.measure else "convert" if page is self.convert else
+               "flood" if page is self.models else "measure" if page is self.measure else
+               "convert" if page is self.convert else "methods" if page is self.methods else
                "jobs" if page is self.jobs else "drone")
         for k, b in self.nav.items():
             b.setChecked(k == key)

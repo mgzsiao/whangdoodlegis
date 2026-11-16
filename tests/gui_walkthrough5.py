@@ -111,6 +111,14 @@ P.next()
 wait(lambda: idle())
 shot("53_road_height")
 P.next()
+assert P.step() == "vcurves" and P.vc_yes.isChecked()
+wait(lambda: idle())
+r_ = P.takeoff
+print("vertical:", [(round(q[0], 1), round(q[1], 2)) for q in r_.pvis],
+      [(c.kind, round(c.length, 1), round(c.k, 1)) for c in r_.vcurves])
+assert len(r_.pvis) >= 2 and P.pvi_table.rowCount() == len(r_.pvis)
+shot("53b_road_vertical_curves")
+P.next()
 P.r_std.setCurrentIndex(P.r_std.findData("fmr"))
 assert abs(P.r_width.value() - 6.1) < 1e-9
 P.r_ditch.setChecked(True)

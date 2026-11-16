@@ -312,6 +312,23 @@ class RoadProfileView(QWidget):
             path.lineTo(P(a, b))
         p.setPen(QPen(NAVY, 2.4))
         p.drawPath(path)
+        pv = getattr(self.r, "pvis", None) or []
+        if pv:                              # straight grades (dashed), PVIs and curve ends
+            p.setPen(QPen(QColor("#7A869C"), 1, Qt.DashLine))
+            for (a0, b0, *_), (a1, b1, *_) in zip(pv, pv[1:]):
+                p.drawLine(P(a0, b0), P(a1, b1))
+            for c in self.r.vcurves:
+                q = P(c.pvi_s, c.pvi_z)
+                p.setPen(QPen(QColor(theme.INK), 1))
+                p.setBrush(QColor("white"))
+                p.drawPolygon(QPolygonF([QPointF(q.x(), q.y() - 6), QPointF(q.x() - 5, q.y() + 3),
+                                         QPointF(q.x() + 5, q.y() + 3)]))
+                p.setBrush(Qt.NoBrush)
+                if c.length > 0:
+                    p.setPen(QPen(QColor("#A0288C"), 2))
+                    for s_, z_ in ((c.pvc_s, c.pvc_z), (c.pvt_s, c.pvt_z)):
+                        q = P(s_, z_)
+                        p.drawLine(QPointF(q.x(), q.y() - 6), QPointF(q.x(), q.y() + 6))
         if 0 <= self.sel < len(self.r.stations):
             st = self.r.stations[self.sel]
             q = P(st.s, z0)
