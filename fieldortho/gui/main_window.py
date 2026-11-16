@@ -14,6 +14,7 @@ from ..core.settings import Settings
 from . import theme
 from .about import AboutDialog, SupportDialog, logo
 from .dialogs import GcpDialog, SettingsDialog
+from .convert_page import ConvertPage
 from .georef_page import GeorefPage
 from .jobs_page import JobsPage
 from .measure_page import MeasurePage
@@ -131,12 +132,13 @@ class MainWindow(QMainWindow):
         self.georef = GeorefPage(s)
         self.models = ModelPage(s)
         self.measure = MeasurePage(s)
+        self.convert = ConvertPage(s)
         self.jobs = JobsPage(s)
         ob = QPushButton("Open job folder…")
         ob.clicked.connect(self._browse_job)
         self.jobs.set_actions([ob])
         self.wizard = [self.photos, self.check, self.options, self.process, self.results]
-        for p in (self.home, *self.wizard, self.georef, self.models, self.measure, self.jobs):
+        for p in (self.home, *self.wizard, self.georef, self.models, self.measure, self.convert, self.jobs):
             self.stack.addWidget(p)
             p.heading_changed.connect(self._refresh_header)
         self._last_wizard = None
@@ -194,7 +196,8 @@ class MainWindow(QMainWindow):
                                     ("georef", "georef", "Georeference a map", lambda: self.show_page(self.georef)),
                                     ("flood", "flood", "Flood & landslide", lambda: self.show_page(self.models)),
                                     ("measure", "measure", "Measure & earthworks",
-                                     lambda: self.show_page(self.measure))):
+                                     lambda: self.show_page(self.measure)),
+                                    ("convert", "convert", "Convert files", lambda: self.show_page(self.convert))):
             b = NavButton(icon, text)
             b.clicked.connect(fn)
             v.addWidget(b)
@@ -213,11 +216,6 @@ class MainWindow(QMainWindow):
         sep.setStyleSheet("background: #22355A;")
         v.addWidget(sep)
         v.addSpacing(8)
-        sup = QPushButton("♥  Support the Developer")
-        sup.setObjectName("NavLink")
-        sup.setCursor(Qt.PointingHandCursor)
-        sup.clicked.connect(self.show_support)
-        v.addWidget(sup)
         ab = QPushButton("ⓘ  About " + APP_NAME)
         ab.setObjectName("NavLink")
         ab.setCursor(Qt.PointingHandCursor)
@@ -227,6 +225,12 @@ class MainWindow(QMainWindow):
         foot = label(f"Version {__version__} · {DISCLAIMER_SHORT}", "NavFoot", wrap=True)
         foot.setTextInteractionFlags(Qt.NoTextInteraction)
         v.addWidget(foot)
+        sup = QPushButton("♥  Support the Developer")
+        sup.setObjectName("NavSupport")
+        sup.setCursor(Qt.PointingHandCursor)
+        sup.setToolTip("Voluntary donation (InstaPay QR)")
+        sup.clicked.connect(lambda: SupportDialog(self).exec())
+        v.addWidget(sup)
         return nav
 
     def _build_header(self) -> QFrame:
@@ -302,7 +306,7 @@ class MainWindow(QMainWindow):
         if page in self.wizard:
             self._last_wizard = page
         key = ("home" if page is self.home else "georef" if page is self.georef else
-               "flood" if page is self.models else "measure" if page is self.measure else
+               "flood" if page is self.models else "measure" if page is self.measure else "convert" if page is self.convert else
                "jobs" if page is self.jobs else "drone")
         for k, b in self.nav.items():
             b.setChecked(k == key)
@@ -355,9 +359,6 @@ class MainWindow(QMainWindow):
         d = AboutDialog(self)
         d.exec()
 
-    def show_support(self):
-        SupportDialog(self).exec()
-
     def open_settings(self):
         if SettingsDialog(self.s, self).exec():
             self.stack.currentWidget().enter()
@@ -372,6 +373,8 @@ class MainWindow(QMainWindow):
         elif row.kind == "earthworks":
             self.show_page(self.measure)
             self.measure.load_plan(row.ref)
+        elif row.kind == "fileset":
+            self.open_fileset(os.path.dirname(row.ref))
         else:
             self.show_page(self.models)
             self.models.load_scenario(row.ref)
@@ -415,6 +418,27 @@ class MainWindow(QMainWindow):
         self.process.start()
 
     # ------------------------------------------------------------------ existing jobs
+    def open_fileset(self, folder: str):
+        from ..core import filesets as fsm
+        try:
+            fs = fsm.FileSet.load(folder)
+        except (OSError, ValueError, TypeError) as e:
+            QMessageBox.warning(self, "Cannot open", str(e))
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Open own files")
+        box.setText(f"Open “{fs.name}” in which tool?")
+        m = box.addButton("Measure && earthworks", QMessageBox.AcceptRole)
+        f = box.addButton("Flood && landslide", QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+        if box.clickedButton() is m:
+            self.show_page(self.measure)
+            self.measure.use_job(fs)
+        elif box.clickedButton() is f:
+            self.show_page(self.models)
+            self.models.use_job(fs)
+
     def open_job(self, job_dir: str):
         if self._busy():
             return

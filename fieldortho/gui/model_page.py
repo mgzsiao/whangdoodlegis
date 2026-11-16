@@ -11,13 +11,14 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
                                QHBoxLayout, QLabel, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSlider,
                                QSplitter, QTabWidget, QVBoxLayout, QWidget, QButtonGroup)
 
-from ..core import activity, crs as crsmod, exporters as ex, flood, jobs, landslide as ls, mapclasses, system
+from ..core import activity, crs as crsmod, exporters as ex, filesets as fsm, flood, jobs, landslide as ls, mapclasses, system
 from ..core.model_export import background_for, export_flood, export_landslide, slope_rgb
 from ..core.terrain import load_dem, lonlat as dem_lonlat
 from . import theme
 from .canvas import MapCanvas, map_card
 from .inputs import set_state
 from .export_dialog import SimpleExportDialog
+from .own_files import OwnFilesDialog, add_entry, fill_sources, first_usable
 from .pages_setup import Page, clear_layout
 from .widgets import IssueBox, StatCard, label
 from .workers import Task
@@ -41,6 +42,17 @@ def legend_row(color, text):
     return w
 
 
+def _terrain_entries(src):
+    """Source-list entries (text, (dem path, ortho path, name)) of a drone job or own file set."""
+    files = src.summary.get("files", {})
+    out = []
+    for k, t in (("dtm", "terrain DTM"), ("dsm", "surface DSM")):
+        if files.get(k) and os.path.exists(files[k]):
+            ortho = files.get("ortho") if files.get("ortho") and os.path.exists(files["ortho"]) else None
+            out.append((f"{src.name} \u2013 {t}", (files[k], ortho, src.name)))
+    return out
+
+
 class ModelPage(Page):
     home = Signal()
     CRUMB = "Tools"
@@ -50,9 +62,11 @@ class ModelPage(Page):
         super().__init__(session)
         self.source = QComboBox()
         self.source.setMinimumWidth(320)
-        self.source.setToolTip("The terrain model (DTM, bare ground) to run the scenarios on.")
-        ob = QPushButton("Open elevation file\u2026")
+        self.source.setToolTip("The terrain model (DTM, bare ground) to run the scenarios on: from a drone job "
+                               "processed in this app, or your own files made elsewhere.")
+        ob = QPushButton("Use my own files\u2026")
         ob.setObjectName("Primary")
+        ob.setToolTip("Run floods and landslides on DTM / DSM / photo map files made outside this app.")
         ob.clicked.connect(self._open_file)
         self.set_actions([QLabel("Terrain"), self.source, ob])
 
@@ -342,46 +356,29 @@ class ModelPage(Page):
         cur = self.source.currentData()
         self.source.blockSignals(True)
         self.source.clear()
-        self.source.addItem("– choose terrain –", None)
-        for d in self.s.settings.recent_jobs:
-            if not jobs.Job.is_job_dir(d):
-                continue
-            try:
-                j = jobs.Job.load(d)
-            except Exception:
-                continue
-            files = j.summary.get("files", {})
-            for k, t in (("dtm", "terrain DTM"), ("dsm", "surface DSM")):
-                if k in files and os.path.exists(files[k]):
-                    self.source.addItem(f"{j.name} – {t}", (files[k], files.get("ortho"), j.name))
+        fill_sources(self.source, self.s.settings, _terrain_entries, "– choose terrain –")
         if cur:
             i = self.source.findData(cur)
-            if i < 0:
-                self.source.addItem(os.path.basename(cur[0]), cur)
-                i = self.source.count() - 1
-            self.source.setCurrentIndex(i)
+            if i < 0 and os.path.exists(cur[0]):
+                i = add_entry(self.source, cur[2] or os.path.basename(cur[0]), cur, True)
+            self.source.setCurrentIndex(max(0, i))
         self.source.blockSignals(False)
-        if self.dem is None and self.source.count() > 1 and cur is None:
-            self.source.setCurrentIndex(1)
+        if self.dem is None and cur is None:
+            i = first_usable(self.source)
+            if i > 0:
+                self.source.setCurrentIndex(i)
 
     def use_job(self, job):
-        files = job.summary.get("files", {})
-        key = "dtm" if "dtm" in files else "dsm"
-        if key in files:
-            data = (files[key], files.get("ortho"), job.name)
-            i = self.source.findData(data)
-            if i < 0:
-                self.source.addItem(f"{job.name} – {key.upper()}", data)
-                i = self.source.count() - 1
-            self.source.setCurrentIndex(i)
+        own = isinstance(job, fsm.FileSet)
+        ents = _terrain_entries(job)
+        if ents:
+            text, data = ents[0]
+            self.source.setCurrentIndex(add_entry(self.source, text, data, own))
 
     def _open_file(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Elevation model (GeoTIFF)", os.path.expanduser("~"),
-                                           "GeoTIFF (*.tif *.tiff);;All files (*)")
-        if p:
-            data = (p, None, os.path.splitext(os.path.basename(p))[0])
-            self.source.addItem(os.path.basename(p), data)
-            self.source.setCurrentIndex(self.source.count() - 1)
+        d = OwnFilesDialog(self.s.settings, "flood", self)
+        if d.exec() and d.fileset is not None:
+            self.use_job(d.fileset)
 
     def _source_changed(self, _i):
         data = self.source.currentData()
@@ -799,8 +796,7 @@ class ModelPage(Page):
         data = (sc["dem"], sc.get("ortho"), sc.get("name") or "model")
         i = self.source.findData(data)
         if i < 0:
-            self.source.addItem(f"{data[2]} \u2013 {os.path.basename(data[0])}", data)
-            i = self.source.count() - 1
+            i = add_entry(self.source, f"{data[2]} \u2013 {os.path.basename(data[0])}", data, True)
         if self.source.currentIndex() == i:
             self._source_changed(i)
         else:

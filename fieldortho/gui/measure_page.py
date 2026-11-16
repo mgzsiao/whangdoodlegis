@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDou
                                QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMessageBox,
                                QPushButton, QRadioButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
-from ..core import earthworks as ew, exporters as ex, jobs, measure as ms, system
+from ..core import earthworks as ew, exporters as ex, filesets as fsm, jobs, measure as ms, system
 from ..core.model_export import background_for, slope_rgb
 from ..core.terrain import load_dem, lonlat as dem_lonlat
 from . import theme
 from .canvas import MapCanvas, map_card
 from .export_dialog import SimpleExportDialog
+from .own_files import OwnFilesDialog, add_entry, fill_sources, first_usable
 from .pages_setup import Page, clear_layout
 from .widgets import IssueBox, StatCard, label
 from .workers import Task
@@ -139,9 +140,13 @@ class MeasurePage(Page):
         super().__init__(session)
         self.source = QComboBox()
         self.source.setMinimumWidth(320)
-        self.source.setToolTip("The processed drone job to measure on.")
+        self.source.setToolTip("The map to measure on: a drone job processed in this app, or your own files "
+                               "(elevation models and photo maps made elsewhere).")
         ob = QPushButton("Open job folder…")
         ob.clicked.connect(self._browse_job)
+        own = QPushButton("Use my own files…")
+        own.setToolTip("Measure and plan on DTM / DSM / photo map files made outside this app.")
+        own.clicked.connect(self._own_files)
         self.mode_group = QButtonGroup(self)
         modes = []
         for i, text in enumerate(("Measure", "Plan earthworks")):
@@ -153,7 +158,7 @@ class MeasurePage(Page):
             self.mode_group.addButton(b, i)
             modes.append(b)
         self.mode_group.idClicked.connect(lambda i: self.set_mode("plan" if i else "measure"))
-        self.set_actions(modes + [QLabel("   Drone map"), self.source, ob])
+        self.set_actions(modes + [QLabel("   Map"), self.source, ob, own])
         self.mode = "measure"
 
         split = QSplitter()
@@ -412,34 +417,26 @@ class MeasurePage(Page):
         cur = self.source.currentData()
         self.source.blockSignals(True)
         self.source.clear()
-        self.source.addItem("– choose a processed drone job –", None)
-        seen = set()
-        for d in self.s.settings.recent_jobs:
-            if d in seen or not jobs.Job.is_job_dir(d):
-                continue
-            seen.add(d)
-            try:
-                j = jobs.Job.load(d)
-            except Exception:
-                continue
-            files = j.summary.get("files", {})
+
+        def entries(src):
+            files = src.summary.get("files", {})
             if any(k in files and os.path.exists(files[k]) for k in ("dtm", "dsm")):
-                self.source.addItem(j.name, d)
+                return [(src.name, src.job_dir)]
+            return []
+        fill_sources(self.source, self.s.settings, entries, "– choose a drone job or your own files –")
         if cur:
             i = self.source.findData(cur)
-            if i < 0:
-                self.source.addItem(os.path.basename(cur), cur)
-                i = self.source.count() - 1
-            self.source.setCurrentIndex(i)
+            if i < 0 and fsm.is_source_dir(cur):
+                i = add_entry(self.source, os.path.basename(cur), cur, fsm.FileSet.is_fileset_dir(cur))
+            self.source.setCurrentIndex(max(0, i))
         self.source.blockSignals(False)
-        if self.job is None and cur is None and self.source.count() > 1:
-            self.source.setCurrentIndex(1)
+        if self.job is None and cur is None:
+            i = first_usable(self.source)
+            if i > 0:
+                self.source.setCurrentIndex(i)
 
     def use_job(self, job):
-        i = self.source.findData(job.job_dir)
-        if i < 0:
-            self.source.addItem(job.name, job.job_dir)
-            i = self.source.count() - 1
+        i = add_entry(self.source, job.name, job.job_dir, isinstance(job, fsm.FileSet))
         if self.source.currentIndex() == i:
             self._source_changed(i)
         else:
@@ -454,19 +451,31 @@ class MeasurePage(Page):
             return
         self.use_job(jobs.Job.load(d))
 
+    def _own_files(self):
+        d = OwnFilesDialog(self.s.settings, "measure", self)
+        if d.exec() and d.fileset is not None:
+            self.use_job(d.fileset)
+
     def _source_changed(self, _i):
         d = self.source.currentData()
         if not d:
             return
         try:
-            job = jobs.Job.load(d)
+            job = fsm.load_source(d)
         except Exception as e:
-            QMessageBox.warning(self, "Cannot open job", str(e))
+            QMessageBox.warning(self, "Cannot open", str(e))
             return
         files = {k: v for k, v in job.summary.get("files", {}).items() if v and os.path.exists(v)}
         if not ("dtm" in files or "dsm" in files):
-            QMessageBox.information(self, "No elevation model",
-                                    "This job has no terrain or surface model. Process it with DTM/DSM turned on.")
+            if isinstance(job, fsm.FileSet):
+                QMessageBox.warning(self, "Elevation model missing",
+                                    "We cannot process without an elevation model (DTM or DSM). The file of "
+                                    f"“{job.name}” was moved or deleted:\n" +
+                                    "\n".join(job.original.get(k, "") for k in ("dtm", "dsm") if k in job.original)
+                                    + "\n\nChoose the files again with “Use my own files…”.")
+            else:
+                QMessageBox.information(self, "No elevation model",
+                                        "This job has no terrain or surface model. Process it with DTM/DSM turned on.")
             return
         self.job, self.files = job, files
         self.src_kind.blockSignals(True)
@@ -691,12 +700,12 @@ class MeasurePage(Page):
             QMessageBox.warning(self, "Cannot open plan", f"{os.path.basename(path)}: {e}")
             return
         job_dir = plan.get("job_dir", "")
-        if not jobs.Job.is_job_dir(job_dir):          # job folder moved: the plan sits in <job>/Earthworks
+        if not fsm.is_source_dir(job_dir):          # job folder moved: the plan sits in <job>/Earthworks
             job_dir = os.path.dirname(os.path.dirname(os.path.abspath(path)))
-        if not jobs.Job.is_job_dir(job_dir):
-            QMessageBox.warning(self, "Drone map missing", "The drone mapping job of this plan was not found.")
+        if not fsm.is_source_dir(job_dir):
+            QMessageBox.warning(self, "Map missing", "The drone job or own files of this plan were not found.")
             return
-        self.use_job(jobs.Job.load(job_dir))
+        self.use_job(fsm.load_source(job_dir))
         if self.job is None:
             return
         self.set_mode("plan")
@@ -814,7 +823,7 @@ class MeasurePage(Page):
             if d and (self.job is None or os.path.normcase(d) != os.path.normcase(self.job.job_dir)):
                 self.cmp_job.addItem(self.source.itemText(i), d)
         if self.cmp_job.count() == 0:
-            self.cmp_job.addItem("\u2013 no other processed drone map \u2013", None)
+            self.cmp_job.addItem("\u2013 no other drone map or own files \u2013", None)
         i = self.cmp_job.findData(cur)
         self.cmp_job.setCurrentIndex(max(0, i))
         self.cmp_job.blockSignals(False)
@@ -824,7 +833,7 @@ class MeasurePage(Page):
         if not d:
             return None
         try:
-            files = jobs.Job.load(d).summary.get("files", {})
+            files = fsm.load_source(d).summary.get("files", {})
         except Exception:
             return None
         k = self.src_kind.currentData()

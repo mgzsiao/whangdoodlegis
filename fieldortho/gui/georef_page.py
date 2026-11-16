@@ -11,10 +11,10 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFrame,
                                QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QMessageBox, QProgressBar, QPushButton, QScrollArea, QSplitter, QTableWidget,
-                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+                               QMessageBox, QProgressBar, QPushButton, QScrollArea, QSplitter, QStackedWidget,
+                               QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from ..core import activity, crs as crsmod, georef as G, mapclasses as M, system
+from ..core import activity, crs as crsmod, georef as G, georef_manual as GM, mapclasses as M, system
 from ..core.georef_export import GeorefExport, export as georef_export
 from . import theme
 from .canvas import MapCanvas, map_card, qimage_from
@@ -30,6 +30,9 @@ class ClickLabel(QLabel):
 
     def mousePressEvent(self, _e):
         self.clicked.emit()
+
+
+MANUAL_MIN = 4          # grid crossings needed when pointing the grid by hand (3 fit + 1 check)
 
 
 class GeorefPage(Page):
@@ -88,12 +91,22 @@ class GeorefPage(Page):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(14, 12, 14, 12)
         lay.setSpacing(8)
-        self.det_box = QVBoxLayout()
-        lay.addLayout(self.det_box)
-        lay.addWidget(IssueBox("info", "Type the numbers only \u2013 no \u00b0 symbol needed",
-                               "Read each grid label from its small picture and type the degrees, minutes and "
-                               "seconds into the boxes. Space or Tab jumps to the next box; choose E/W or N/S "
-                               "from the list. Click a picture to zoom the map to that label."))
+        mrow = QHBoxLayout()
+        mrow.setSpacing(6)
+        self.grid_mode_btns = []
+        for i, (text, tip) in enumerate((("Found by the app", "The app finds the grid lines; you type the labels."),
+                                         ("Point the grid myself", "Click grid crossings on the map and type "
+                                          "their coordinates. Use this when the app cannot find the grid "
+                                          "or finds it wrongly."))):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setChecked(i == 0)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _c, k=i: self.set_grid_mode(k))
+            mrow.addWidget(b)
+            self.grid_mode_btns.append(b)
+        mrow.addStretch(1)
+        lay.addLayout(mrow)
         lay.addWidget(label("MAP DATUM (PRINTED ON THE MAP)", "Section"))
         self.grid_crs = QComboBox()
         for code, text in crsmod.GRID_CHOICES:
@@ -104,6 +117,18 @@ class GeorefPage(Page):
         self.interval = IntervalEdit(1, 0)
         self.interval.setToolTip("The difference between two neighbouring grid labels, e.g. 1 minute.")
         lay.addWidget(self.interval)
+        self.grid_stack = QStackedWidget()
+        lay.addWidget(self.grid_stack, 1)
+        aw = QWidget()
+        lay = QVBoxLayout(aw)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(8)
+        self.det_box = QVBoxLayout()
+        lay.addLayout(self.det_box)
+        lay.addWidget(IssueBox("info", "Type the numbers only \u2013 no \u00b0 symbol needed",
+                               "Read each grid label from its small picture and type the degrees, minutes and "
+                               "seconds into the boxes. Space or Tab jumps to the next box; choose E/W or N/S "
+                               "from the list. Click a picture to zoom the map to that label."))
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         holder = QWidget()
@@ -125,9 +150,157 @@ class GeorefPage(Page):
         self.make_btn.clicked.connect(self._make_points)
         frow.addWidget(self.make_btn)
         lay.addLayout(frow)
+        self.grid_stack.addWidget(aw)
+        self.grid_stack.addWidget(self._manual_grid_panel())
         self.value_edits: list[tuple[G.GridLine, DmsEdit]] = []
         self._row_msgs: dict[int, tuple[QLabel, QLabel]] = {}
         return w
+
+    def _manual_grid_panel(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.setSpacing(8)
+        lay.addWidget(IssueBox("info", "Click where grid lines cross, then type the coordinates",
+                               "1. Zoom in (scroll) on a place where a vertical and a horizontal grid line cross, "
+                               "or on a + grid mark.  2. Click exactly on the crossing.  3. Type its longitude "
+                               "and latitude from the labels at the map edge.  Do at least "
+                               f"{MANUAL_MIN} crossings, spread out to the four corners of the map; more "
+                               "crossings give a better check. After 3 crossings the app suggests the "
+                               "values of the next one (check them)."))
+        self.snap_cb = QCheckBox("Fine-tune my click onto the crossing lines")
+        self.snap_cb.setChecked(True)
+        self.snap_cb.setToolTip("Moves the click by up to 10 map pixels onto the centre of the two grid lines. "
+                                "Turn off for faint or broken grid lines.")
+        lay.addWidget(self.snap_cb)
+        self.cross_table = QTableWidget(0, 4)
+        self.cross_table.setHorizontalHeaderLabels(["#", "Longitude", "Latitude", "Error (m)"])
+        hh = self.cross_table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.Stretch)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.cross_table.verticalHeader().setVisible(False)
+        self.cross_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.cross_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.cross_table.cellDoubleClicked.connect(self._zoom_cross)
+        lay.addWidget(self.cross_table, 1)
+        self.cross_status = label("", "Muted", wrap=True)
+        lay.addWidget(self.cross_status)
+        r = QHBoxLayout()
+        self.cross_btn = QPushButton("\uFF0B  Click a crossing")
+        self.cross_btn.setCheckable(True)
+        self.cross_btn.toggled.connect(self._toggle_cross)
+        r.addWidget(self.cross_btn)
+        d = QPushButton("Delete selected")
+        d.clicked.connect(self._delete_crosses)
+        r.addWidget(d)
+        r.addStretch(1)
+        self.cross_next = QPushButton("Next: check accuracy  \u2192")
+        self.cross_next.setObjectName("Primary")
+        self.cross_next.clicked.connect(self._crosses_done)
+        r.addWidget(self.cross_next)
+        lay.addLayout(r)
+        self._fill_crosses()
+        return w
+
+    # ---------------------------------------------------------------- manual grid
+    def set_grid_mode(self, k: int):
+        for i, b in enumerate(self.grid_mode_btns):
+            b.setChecked(i == k)
+        self.grid_stack.setCurrentIndex(k)
+        self.tabs.setCurrentIndex(0)
+        if k == 1:
+            self.add_btn.setChecked(False)
+            self.cross_btn.setChecked(self.rgb is not None)
+        else:
+            self.cross_btn.setChecked(False)
+
+    def _crosses(self):
+        return [g for g in getattr(self, "gcps", []) if g.source == "crossing"]
+
+    def _toggle_cross(self, on):
+        if on and self.add_btn.isChecked():
+            self.add_btn.setChecked(False)
+        self.canvas.set_pick_cursor(on)
+        self.readout.setText("Click exactly on a grid crossing (zoom in first: scroll the mouse wheel)."
+                             if on else "Scroll to zoom, drag to move.")
+
+    def _add_crossing(self, x, y):
+        moved = ""
+        if self.snap_cb.isChecked():
+            r = GM.refine_crossing(self.rgb, x, y)
+            if r is not None:
+                d = math.hypot(r[0] - x, r[1] - y)
+                x, y = r
+                if d >= 0.5:
+                    moved = f"Your click was moved {d:.1f} map pixels onto the line crossing."
+            else:
+                moved = ("No clear line crossing was found next to your click, so it is used exactly where you "
+                         "clicked. For best accuracy, Cancel, zoom in further and click the centre of the crossing.")
+        code = self._grid_code()
+        n = len(self._crosses())
+        preset, note = None, moved
+        if self.fit is not None and n >= 3:
+            preset = GM.suggest(self.fit, x, y, code, self.interval.degrees())
+            if preset is not None:
+                note = (note + "  " if note else "") + ("Suggested from your other crossings \u2013 check against "
+                                                        "the labels on the map before pressing OK.")
+        self.canvas.add_marker(x, y, "?", "#F57C00")
+        d = CoordDialog(crsmod.is_geographic(code), crsmod.label(code), x, y, self,
+                        title=f"Grid crossing {n + 1}", note=note, preset=preset)
+        ok = d.exec()
+        vals = d.values() if ok else None
+        if vals is None:
+            self._draw()
+            return
+        gx, gy = vals
+        self.gcps.append(G.GCP(x, y, gx, gy, True, "crossing", f"Crossing {n + 1}"))
+        self._refit()
+
+    def _fill_crosses(self):
+        cr = self._crosses()
+        geo = crsmod.is_geographic(self._grid_code())
+        self.cross_table.setRowCount(len(cr))
+        for i, g in enumerate(cr):
+            vals = (str(i + 1), G.format_dms(g.gx, False) if geo else f"{g.gx:.3f}",
+                    G.format_dms(g.gy, True) if geo else f"{g.gy:.3f}",
+                    "" if g.res_m is None else f"{g.res_m:.2f}")
+            for c, t in enumerate(vals):
+                it = QTableWidgetItem(t)
+                if c == 3 and g.res_m is not None and self.fit and \
+                        g.res_m > 3 * max(self.fit.rmse_m, self.fit.pixel_m * 0.5):
+                    it.setForeground(Qt.red)
+                self.cross_table.setItem(i, c, it)
+        n = len(cr)
+        if n < MANUAL_MIN:
+            t = f"{n} of at least {MANUAL_MIN} crossings."
+        else:
+            t = f"{n} crossings."
+            if self.fit:
+                t += f" Average error {self.fit.rmse_m:.2f} m."
+        self.cross_status.setText(t)
+        self.cross_next.setEnabled(n >= MANUAL_MIN)
+
+    def _zoom_cross(self, r, _c):
+        cr = self._crosses()
+        if 0 <= r < len(cr):
+            self.canvas.zoom_to(cr[r].px, cr[r].py, 6)
+
+    def _delete_crosses(self):
+        cr = self._crosses()
+        rows = {i.row() for i in self.cross_table.selectedIndexes()}
+        drop = {id(cr[r]) for r in rows if r < len(cr)}
+        self.gcps = [g for g in self.gcps if id(g) not in drop]
+        self._refit()
+
+    def _crosses_done(self):
+        if len(self._crosses()) < MANUAL_MIN:
+            QMessageBox.information(self, "More crossings needed",
+                                    f"Click at least {MANUAL_MIN} grid crossings, spread out over the map.")
+            return
+        self.cross_btn.setChecked(False)
+        self.order.setCurrentIndex(0)
+        self.tabs.setCurrentIndex(1)
+        self._refit()
 
     def _points_tab(self):
         w = QWidget()
@@ -262,9 +435,11 @@ class GeorefPage(Page):
         self.det = None
         clear_layout(self.det_box)
         self.det_box.addWidget(IssueBox("warning", "No coordinate grid found automatically", msg +
-                                        " Use “Add point by clicking” on the Control points tab."))
+                                        " Click “Point the grid myself” above and click the grid "
+                                        "crossings on the map."))
         self._fill_label_rows()
-        self.readout.setText("Grid not detected – add control points manually.")
+        self.set_grid_mode(1)
+        self.readout.setText("Grid not detected – point the grid yourself: click a grid crossing.")
 
     def _detected(self, det: G.Detection):
         self.det = det
@@ -402,7 +577,7 @@ class GeorefPage(Page):
                                     "Some values look wrong (marked red or orange). Continue anyway?") \
                     != QMessageBox.Yes:
                 return
-        manual = [g for g in self.gcps if g.source == "manual"]
+        manual = [g for g in self.gcps if g.source in ("manual", "crossing")]
         self.gcps = G.make_gcps(self.det) + manual
         if len(self.gcps) < 3:
             QMessageBox.information(self, "Not enough values",
@@ -437,6 +612,7 @@ class GeorefPage(Page):
                 + crsmod.datum_note(self._grid_code(), "EPSG:4326", *f.lonlat)))
             self.out_crs.set_lonlat(f.lonlat)
         self._fill_table()
+        self._fill_crosses()
         self._draw()
 
     def _fill_table(self):
@@ -485,12 +661,17 @@ class GeorefPage(Page):
         self._refit()
 
     def _toggle_add(self, on):
+        if on and self.cross_btn.isChecked():
+            self.cross_btn.setChecked(False)
         self.adding = on
         self.canvas.set_pick_cursor(on)
         self.readout.setText("Click exactly on a point whose coordinates you know (zoom in first)."
                              if on else "Scroll to zoom, drag to move.")
 
     def _canvas_click(self, x, y):
+        if self.rgb is not None and self.cross_btn.isChecked():
+            self._add_crossing(x, y)
+            return
         if not self.adding or self.rgb is None:
             return
         code = self._grid_code()

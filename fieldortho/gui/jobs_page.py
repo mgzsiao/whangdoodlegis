@@ -89,7 +89,7 @@ class JobsTable(QWidget):
         self.kind = QComboBox()
         for t, k in (("All types", ""), ("Drone mapping", "drone"), ("Georeference", "georef"),
                      ("Flood scenario", "flood"), ("Landslide scenario", "landslide"),
-                     ("Earthworks plan", "earthworks")):
+                     ("Earthworks plan", "earthworks"), ("Own files", "fileset")):
             self.kind.addItem(t, k)
         self.kind.currentIndexChanged.connect(self._fill)
         top.addWidget(self.kind)

@@ -361,14 +361,17 @@ class CoordDialog(QDialog):
     """Coordinates of a clicked control point: guided DMS boxes for lat/long systems,
     easting/northing in metres for projected ones."""
 
-    def __init__(self, geographic: bool, crs_label: str, px: float, py: float, parent=None):
+    def __init__(self, geographic: bool, crs_label: str, px: float, py: float, parent=None,
+                 title: str = "Coordinates of this point", note: str = "", preset=None):
         super().__init__(parent)
         self.geo = geographic
-        self.setWindowTitle("Coordinates of this point")
+        self.setWindowTitle(title)
         self.setMinimumWidth(460)
         lay = QVBoxLayout(self)
         lay.setSpacing(10)
         lay.addWidget(hint(f"Point at map pixel {px:.1f}, {py:.1f}. Coordinate system: {crs_label}."))
+        if note:
+            lay.addWidget(hint(note))
         g = QGridLayout()
         g.setHorizontalSpacing(10)
         if geographic:
@@ -404,6 +407,13 @@ class CoordDialog(QDialog):
         self.bb.accepted.connect(self.accept)
         self.bb.rejected.connect(self.reject)
         lay.addWidget(self.bb)
+        if preset is not None:
+            if geographic:
+                self.lon.set_value(preset[0], auto=True)
+                self.lat.set_value(preset[1], auto=True)
+            else:
+                self.x.setText(f"{preset[0]:.3f}")
+                self.y.setText(f"{preset[1]:.3f}")
         self._check()
 
     def values(self) -> tuple[float, float] | None:

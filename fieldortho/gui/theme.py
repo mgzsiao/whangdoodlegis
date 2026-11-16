@@ -31,6 +31,7 @@ ICONS = {"home": "", "drone": "", "georef": "", "flood": "", "jobs":
          "settings": "", "heart": "", "info": "", "help": "", "zoom_in": "",
          "zoom_out": "", "fit": "", "folder": "", "search": "", "open": ""}
 
+ICONS["convert"] = chr(0xE8AB)      # switch arrows
 ICONS["measure"] = ""     # ruler and set square (same code point in both icon fonts)
 
 LEVEL_COLORS = {"error": (ERROR, ERROR_SOFT), "warning": (WARN, WARN_SOFT), "info": (INFO, INFO_SOFT),
@@ -60,6 +61,9 @@ QLabel#Brand {{ color: white; font-size: 17px; font-weight: 700; }}
 QLabel#BrandSub {{ color: #8796B3; font-size: 11px; }}
 QLabel#NavSection {{ color: #6D7C99; font-size: 10px; font-weight: 600; letter-spacing: 1px; }}
 QLabel#NavFoot {{ color: #8190AD; font-size: 11px; }}
+QPushButton#NavSupport {{ background: transparent; border: none; color: #E58FA6; text-align: left;
+    font-size: 11px; padding: 4px 0 0 0; }}
+QPushButton#NavSupport:hover {{ color: #FFB3C6; text-decoration: underline; }}
 QPushButton#NavItem {{ background: transparent; border: none; border-radius: 6px; color: {NAV_INK};
                       text-align: left; padding: 9px 10px; font-size: 13px; }}
 QPushButton#NavItem:hover {{ background: #16284A; color: white; }}
