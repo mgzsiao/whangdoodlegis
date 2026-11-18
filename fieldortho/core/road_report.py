@@ -16,7 +16,7 @@ from . import xsection_draw as xd
 from .earthworks_report import AMBER, CUT_RGB, FILL_RGB, GROUND_RGB, INK, MUTED, NAVY, _font, ms_nice
 
 ROAD_NOTES = (
-    "Volumes between stations use the average end-area method: the dig and fill areas of two neighbouring "
+    "Volumes between stations use the average end-area method: the cut and fill areas of two neighbouring "
     "cross-sections are averaged and multiplied by the distance between them. Closer stations follow the ground "
     "more closely.",
     "On curves the average end-area method is used without a curvature correction; the error is small unless the "
@@ -30,13 +30,17 @@ def quantities(r: rdm.RoadResult) -> list[tuple[str, str, str]]:
     rows = [("Road length", f"{r.length:,.1f} m", f"{st[0].label} to {st[-1].label}"),
             ("Stations", f"{len(st)}", "including bends and the end"),
             ("Steepest part of the road", f"{r.steepest:.1f} %", f"near {rdm.station_label(r.steepest_at)}"),
-            ("Deepest dig at the centre line", f"{r.deepest_cut:.2f} m", ""),
+            ("Deepest cut at the centre line", f"{r.deepest_cut:.2f} m", ""),
             ("Highest fill at the centre line", f"{r.highest_fill:.2f} m", ""),
-            ("DIG (CUT) total", f"{r.cut:,.1f} m³", ""),
-            ("FILL total", f"{r.fill:,.1f} m³", ""),
-            ("Net (dig − fill)", f"{r.net:,.1f} m³", ""),
-            ("Total earth moved (dig + fill)", f"{r.total:,.1f} m³", ""),
-            ("Soil needed for the fill", f"{h.needed:,.1f} m³", f"fill + {h.shrink_pct:g}% for packing")]
+            ("CUT total (roadway excavation)", f"{r.cut:,.1f} m³", ""),
+            ("FILL total (embankment)", f"{r.fill:,.1f} m³", ""),
+            ("Net (cut − fill)", f"{r.net:,.1f} m³", ""),
+            ("Total earth moved (cut + fill)", f"{r.total:,.1f} m³", "")]
+    if r.pccp_vol > 0:
+        rows.append(("Concrete pavement (PCCP)", f"{r.pccp_area:,.1f} m²", f"{r.pccp_vol:,.1f} m³"))
+    if r.agg_vol > 0:
+        rows.append(("Aggregate subbase", f"{r.agg_vol:,.1f} m³", "incl. aggregate shoulders and sloped layer edges"))
+    rows.append(("Soil needed for the fill", f"{h.needed:,.1f} m³", f"fill + {h.shrink_pct:g}% for packing"))
     if h.balance >= 0:
         rows.append(("Extra soil to haul away", f"{h.balance:,.1f} m³", f"{h.loose:,.1f} m³ loose (+{h.swell_pct:g}%)"))
     else:
@@ -47,7 +51,7 @@ def quantities(r: rdm.RoadResult) -> list[tuple[str, str, str]]:
 
 
 def mass_haul_image(r: rdm.RoadResult, width=1800, height=520) -> Image.Image:
-    """Running balance of earth along the road: rising = more dug than filled so far."""
+    """Running balance of earth along the road: rising = more cut than filled so far."""
     im = Image.new("RGB", (width, height), "white")
     dr = ImageDraw.Draw(im)
     sd = np.array([s.s for s in r.stations])
@@ -80,14 +84,14 @@ def mass_haul_image(r: rdm.RoadResult, width=1800, height=520) -> Image.Image:
         col = CUT_RGB if mb >= 0 else FILL_RGB
         dr.polygon([(xa, y0), (xa, ya), (xb, yb), (xb, y0)], fill=tuple(int(c * 0.3 + 255 * 0.7) for c in col))
     dr.line(pts, fill=NAVY, width=4)
-    for i in range(1, len(m)):                      # balance points: dug soil = soil needed so far
+    for i in range(1, len(m)):                      # balance points: cut soil = soil needed so far
         if (m[i - 1] > 0) != (m[i] > 0) and m[i - 1] != m[i]:
             sx = sd[i - 1] + (sd[i] - sd[i - 1]) * m[i - 1] / (m[i - 1] - m[i])
             X, Y = P(sx, 0)
             dr.ellipse([X - 7, Y - 7, X + 7, Y + 7], outline=INK, width=3)
             dr.text((X - 40, Y + 10), rdm.station_label(sx), font=f, fill=INK)
     dr.text((L, 16), "Earth balance along the road (mass haul)", font=fb, fill=INK)
-    dr.text((width - 900, 18), "above zero: more dug than needed so far · circles: balance points",
+    dr.text((width - 900, 18), "above zero: more cut than needed so far · circles: balance points",
             font=f, fill=MUTED)
     return im
 
@@ -128,7 +132,7 @@ def worked_example(r: rdm.RoadResult, shrink_pct: float) -> list[str]:
                    f"added up across the section in {r.cell:.2f} m steps (trapezoids), from where the left side "
                    f"meets the ground ({b.left_catch:.2f} m) to the right ({b.right_catch:+.2f} m). Ground "
                    f"{b.ground:.3f} m, finished road {b.design:.3f} m at the centre: "
-                   f"{'dig' if b.depth > 0 else 'fill'} {abs(b.depth):.3f} m there.")
+                   f"{'cut' if b.depth > 0 else 'fill'} {abs(b.depth):.3f} m there.")
     c = next((c for c in r.vcurves if c.length > 0), None)
     if c is not None:
         sx = next((s for s in st if c.pvc_s < s.s < c.pvt_s), None)
@@ -165,8 +169,8 @@ def station_rows(r: rdm.RoadResult) -> list[tuple]:
 
 
 STATION_HEADER = ("Station", "Distance (m)", "Easting (m)", "Northing (m)", "Ground (m)", "Road (m)",
-                  "Dig + / Fill − at centre (m)", "Dig area (m²)", "Fill area (m²)", "Dig since last (m³)",
-                  "Fill since last (m³)", "Dig so far (m³)", "Fill so far (m³)", "Running balance (m³)", "Note")
+                  "Cut + / Fill − at centre (m)", "Cut area (m²)", "Fill area (m²)", "Cut since last (m³)",
+                  "Fill since last (m³)", "Cut so far (m³)", "Fill so far (m³)", "Running balance (m³)", "Note")
 
 
 def section_rows(r: rdm.RoadResult, every: float = 0.5) -> list[tuple]:
@@ -258,7 +262,7 @@ def profile_image(r: rdm.RoadResult, width=1800, height=620, mark: float | None 
         dr.rectangle([lx, 26, lx + 30, 32], fill=col)
         dr.text((lx + 40, 14), txt, font=f, fill=INK)
         lx += 260
-    for col, txt in ((CUT_RGB, "Dig"), (FILL_RGB, "Fill")):
+    for col, txt in ((CUT_RGB, "Cut"), (FILL_RGB, "Fill")):
         dr.rectangle([lx, 18, lx + 24, 38], fill=tuple(int(c * 0.35 + 255 * 0.65) for c in col))
         dr.text((lx + 34, 14), txt, font=f, fill=INK)
         lx += 120
@@ -308,13 +312,13 @@ def section_data(r: rdm.RoadResult, rd: rdm.RoadDesign | None = None) -> list[xd
         dist = 0.0 if prev is None else s.s - prev
         prev = s.s
         info = [("Distance from last", f"{dist:.2f} m"),
-                ("Dig area", f"{s.cut_area:.2f} m²"), ("Fill area", f"{s.fill_area:.2f} m²"),
-                ("Dig volume since last", f"{s.cut_vol:.2f} m³"), ("Fill volume since last", f"{s.fill_vol:.2f} m³"),
+                ("Cut area", f"{s.cut_area:.2f} m²"), ("Fill area", f"{s.fill_area:.2f} m²"),
+                ("Cut volume since last", f"{s.cut_vol:.2f} m³"), ("Fill volume since last", f"{s.fill_vol:.2f} m³"),
                 ("Finished level", f"{s.design:.3f} m")]
         if s.ground == s.ground:
             info += [("Ground level", f"{s.ground:.3f} m"),
                      ("On grade at centre" if abs(s.depth) < 0.0005 else
-                      "Dig at centre" if s.depth > 0 else "Fill at centre", f"{abs(s.depth):.3f} m")]
+                      "Cut at centre" if s.depth > 0 else "Fill at centre", f"{abs(s.depth):.3f} m")]
         slopes = []
         for sign in (-1, 1):
             slopes.append((0, sign * w2, xd.slope_text(rd.crown_pct)))
@@ -397,7 +401,7 @@ def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max
     d.rectangle([nx_ - int(22 * k), ny_ - 6, nx_ + int(22 * k), ny_ + int(58 * k)], fill=(255, 255, 255))
     d.polygon([(nx_, ny_), (nx_ - int(10 * k), ny_ + int(28 * k)), (nx_ + int(10 * k), ny_ + int(28 * k))], fill=INK)
     d.text((nx_ - int(7 * k), ny_ + int(30 * k)), "N", font=_font(int(20 * k), True), fill=INK)
-    items = [(CUT_RGB, "Mostly dig"), (FILL_RGB, "Mostly fill"), (AMBER, "Road centre line")]
+    items = [(CUT_RGB, "Mostly cut"), (FILL_RGB, "Mostly fill"), (AMBER, "Road centre line")]
     lx, ly, rh = int(20 * k), int(16 * k), int(30 * k)
     d.rectangle([lx - 8, ly - 8, lx + int(230 * k), ly + rh * len(items)], fill=(255, 255, 255))
     for i, (col, txt) in enumerate(items):
@@ -469,7 +473,7 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=
 def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map_size, n_sections,
                 curves=(), sheet_sizes=(), worked=()) -> str:
     h = r.haul
-    big = [("Dig (cut)", f"{r.cut:,.0f} m³"), ("Fill", f"{r.fill:,.0f} m³"), ("Length", f"{r.length:,.0f} m"),
+    big = [("Cut", f"{r.cut:,.0f} m³"), ("Fill", f"{r.fill:,.0f} m³"), ("Length", f"{r.length:,.0f} m"),
            ("Steepest", f"{r.steepest:.1f} %")]
     cells = "".join(f'<td width="25%" align="center" style="background:#E7EDF7; padding:5px;">'
                     f'<span style="color:#5D677A; font-size:8pt;">{html.escape(k.upper())}</span><br>'
@@ -496,13 +500,13 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
               '<h2 style="font-size:12pt; page-break-before: always;">Map</h2>',
               f'<p align="center"><img src="map.png" width="{int(mw * s)}" height="{int(mh * s)}"></p>',
               '<p style="color:#5D677A; font-size:8pt;">The strip shows the ground worked, from where the sides meet '
-              'the ground on the left to the right. Red = mostly dig, blue = mostly fill.</p>',
+              'the ground on the left to the right. Red = mostly cut, blue = mostly fill.</p>',
               f"{H2}Side view</h2>", '<p><img src="profile.png" width="520" height="179"></p>',
               (f'<p style="color:#5D677A; font-size:8pt;">{html.escape(vcurve_image_note(r))}</p>'
                if r.pvis else ""),
               f"{H2}Earth balance (mass haul)</h2>", '<p><img src="mass.png" width="520" height="150"></p>',
-              '<p style="color:#5D677A; font-size:8pt;">Where the line rises, more soil is dug than the fill needs so '
-              'far; where it falls, fill uses up soil. Between two balance points (circles) the dug soil can be '
+              '<p style="color:#5D677A; font-size:8pt;">Where the line rises, more soil is cut than the fill needs so '
+              'far; where it falls, fill uses up soil. Between two balance points (circles) the cut soil can be '
               'moved to the fill without hauling in or out.</p>']
     if curves:
         parts.append('<h2 style="font-size:12pt; page-break-before: always;">Curves</h2>')
@@ -529,7 +533,7 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
         parts.insert(-1, f'<p style="color:#5D677A; font-size:8pt;">Reference: {html.escape(vt.AASHTO_SOURCE)}.</p>')
     rows = [(x[0], x[4] if x[4] is not None else "-", x[5], x[6] if x[6] is not None else "-", x[7], x[8],
              x[9], x[10], x[13]) for x in station_rows(r)]
-    hdr = ("Station", "Ground m", "Road m", "Dig+/Fill− m", "Dig m²", "Fill m²", "Dig m³", "Fill m³", "Balance m³")
+    hdr = ("Station", "Ground m", "Road m", "Cut+/Fill− m", "Cut m²", "Fill m²", "Cut m³", "Fill m³", "Balance m³")
     parts.append(er._table(rows, ("12%", "11%", "11%", "12%", "9%", "9%", "11%", "11%", "14%"), header=hdr))
     parts.append('<h2 style="font-size:12pt; page-break-before: always;">Quantities by station</h2>')
     parts.append(er._table(quantity_rows(r), ("18%", "16%", "16%", "16%", "17%", "17%"),
@@ -543,7 +547,7 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
         if not k:
             parts.append('<p style="color:#5D677A; font-size:8pt;">Looking toward higher stations; offsets in metres, '
                          'left negative; true scale (1 m across = 1 m up). Brown = ground now, navy = finished road '
-                         'and sides (bottom of the pavement under the road), red = dig, blue = fill. Green labels: '
+                         'and sides (bottom of the subbase under the road), red = cut, blue = fill. Green labels: '
                          'cross slopes and side slopes. The box beside each section gives its areas and the volumes '
                          'since the previous station.</p>')
         sw, sh = sheet_sizes[k] if k < len(sheet_sizes) else (1600, 1550)
@@ -604,7 +608,7 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
         if poly.is_valid and poly.area > 0:
             strips.append(ex.Feature(poly, {"from": a.label, "to": b.label, "cut_m3": round(b.cut_vol, 2),
                                             "fill_m3": round(b.fill_vol, 2),
-                                            "type": "dig" if b.cut_vol >= b.fill_vol else "fill"}))
+                                            "type": "cut" if b.cut_vol >= b.fill_vol else "fill"}))
     centre[0] = ex.Feature(LineString([tuple(p) for p in r.centre]), centre[0].properties)
     edges = [ex.Feature(LineString([s.catch_xy(k) for s in st]), {"side": "left" if k < 0 else "right"})
              for k in (-1, 1)]

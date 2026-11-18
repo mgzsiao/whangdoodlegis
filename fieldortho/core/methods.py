@@ -32,13 +32,18 @@ def _k_table() -> str:
 
 
 def _std_table() -> str:
-    rows = "".join(f"<tr><td>{s['label']}</td><td>{s['width']:g} m</td><td>{s['pavement_t'] * 1000:.0f} mm</td>"
+    rows = "".join(f"<tr><td>{s['label']}</td><td>{s['width']:g} m</td><td>{s['pccp_t'] * 1000:.0f} mm</td>"
+                   f"<td>{s['subbase_t'] * 1000:.0f} mm</td>"
                    f"<td>{s['shoulder_w']:g} m @ {s['shoulder_pct']:g}%</td><td>{s['crown_pct']:g}%</td>"
+                   f"<td>{s['fill_ratio']:g} : 1 / {s['cut_ratio']:g} : 1</td>"
                    f"<td>{s['min_radius']:g} m</td><td>{s['max_grade']:g}%</td></tr>"
                    for s in rdm.STANDARDS.values())
     return ('<table cellpadding="4" cellspacing="0" border="1" style="border-collapse:collapse;">'
-            "<tr><th>Road</th><th>Width</th><th>Concrete</th><th>Shoulders</th><th>Cross slope</th>"
-            f"<th>Min. radius</th><th>Max. grade</th></tr>{rows}</table>")
+            "<tr><th>Road</th><th>Width</th><th>PCCP (min.)</th><th>Aggregate subbase</th><th>Shoulders</th>"
+            "<th>Cross slope</th><th>Fill / cut sides</th>"
+            f"<th>Min. radius</th><th>Max. grade</th></tr>{rows}</table>"
+            f"<p>Width, PCCP, shoulders, cross slope, radius and grade: {rdm.DPWH_SOURCE}. Subbase, fill slope and the "
+            f"V-shaped road side ditch (2 : 1 road side, 1.5 : 1 outer side): {rdm.SECTION_SOURCE}.</p>")
 
 
 def topics() -> list[tuple[str, str, str]]:
@@ -149,7 +154,7 @@ def topics() -> list[tuple[str, str, str]]:
                  "slopes) is the flat area times the average stretch factor of the ground inside, with slopes "
                  "measured over 0.5 m blocks:", _f("surface area = flat area × average(1 / cos(slope))")),
             _sec("Volume", "Every cell inside the outline is compared with a reference surface:",
-                 _f("V(dig) = Σ max(ground − reference, 0) × cell area",
+                 _f("V(cut) = Σ max(ground − reference, 0) × cell area",
                     "V(fill) = Σ max(reference − ground, 0) × cell area"),
                  _list("Ground around the edge: a surface stretched across the outline through the heights along "
                        "it (triangulated) – best for piles and holes.",
@@ -166,13 +171,13 @@ def topics() -> list[tuple[str, str, str]]:
                  "s % toward the chosen direction:",
                  _f("finished = L − s/100 × (distance along the drainage direction from the centre)")),
             _sec("Balanced height", "With “balanced” the height L at the centre is found by bisection "
-                 "(halving the search range until within 0.2 mm) so that the soil dug equals the soil the fill "
-                 "needs after packing:", _f("dig = fill × (1 + shrink)")),
+                 "(halving the search range until within 0.2 mm) so that the soil cut equals the soil the fill "
+                 "needs after packing:", _f("cut = fill × (1 + shrink)")),
             _sec("Sloped sides", "Outside the outline the sides fall (fill) or rise (cut) at H : V until they meet "
                  "the ground (“daylight”). The distance d of each cell from the pad edge comes from a "
                  "distance transform (corrected by half a cell):",
                  _f("side = clip(ground,  edge − d / fill ratio,  edge + d / cut ratio)")),
-            _sec("Volumes", _f("V = Σ (ground − finished) × cell area   (positive = dig, "
+            _sec("Volumes", _f("V = Σ (ground − finished) × cell area   (positive = cut, "
                                "negative = fill)"),
                  "The report adds cross-sections across the lot with end-area volumes between them as a check "
                  "you can follow by hand; they agree with the grid totals within a few percent."),
@@ -199,14 +204,22 @@ def topics() -> list[tuple[str, str, str]]:
                  "headlight reach. Curves are shortened if they would overlap and then flagged.",
                  _k_table(), f"<p><i>Source: {vt.AASHTO_SOURCE}.</i></p>"),
             _sec("Cross-sections", "At each station, across the road (looking toward higher stations): carriageway "
-                 "with a crown (cross slope from the centre), shoulders, optional ditches in cut (inner side 1 : 1), "
-                 "the pavement thickness below the road surface, then side slopes at H : V that meet the ground. "
-                 "Cut and fill areas are added up across the section in small steps (trapezoid rule):",
-                 _f("A(cut) = Σ max(ground − design, 0) × Δoffset")),
+                 "with a crown (cross slope from the centre) and shoulders; the concrete (PCCP) and the aggregate "
+                 "subbase below them, so cut and fill stop at the bottom of the subbase (the subgrade). In cut, a road "
+                 "side ditch (V-shaped or flat-bottomed, road side at the chosen H : V) and then the cut slope up to "
+                 "the ground; on fill, the fill slope from the shoulder edge down to the ground, where the layers end "
+                 "on the slope (that sloped edge counts as aggregate, not embankment), optionally with a ditch at the "
+                 "toe (counted as cut). Cut and fill areas are added up across the section in small steps (trapezoid "
+                 "rule):",
+                 _f("A(cut) = Σ max(ground − design, 0) × Δoffset"),
+                 "The layers are parallel to the road surface:",
+                 _f("A(PCCP) = PCCP thickness × carriageway width"),
+                 _f("A(aggregate) = subbase × (carriageway + 2 shoulders) + PCCP thickness × 2 shoulders "
+                    "+ ½ × fill ratio × (PCCP + subbase)² on each fill side")),
             _sec("Volumes and mass haul", "Average end-area between neighbouring stations:",
                  _f("V = (A1 + A2) / 2 × L",
                     "running balance = cut so far − fill so far × (1 + shrink)"),
-                 "Where the balance line crosses zero, the dug soil and the fill needs are equal (balance points). "
+                 "Where the balance line crosses zero, the cut soil and the fill needs are equal (balance points). "
                  "On curves no curvature correction is applied (small unless the cut or fill is lopsided on a tight "
                  "curve)."),
             _sec("DPWH road standards", "From " + rdm.DPWH_SOURCE + ":", _std_table(),

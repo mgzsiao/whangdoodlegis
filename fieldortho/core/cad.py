@@ -2,7 +2,7 @@
 
 Road: plan in map coordinates (centre line with curves, stations, curve points, edges of the works,
 cross-section lines), a profile sheet and cross-section sheets placed beside the plan.
-Lot / pile: outline, dig / fill zones, spot levels and a section through the middle.
+Lot / pile: outline, cut / fill zones, spot levels and a section through the middle.
 All lengths in metres.
 """
 from __future__ import annotations
@@ -178,7 +178,7 @@ def road_dxf(path: str, r, name: str, vex: float = 10.0) -> str:
         cy = top - 4 * th - (i // cols + 1) * ch
         zc = s.design
         d.line((cx, cy - ch / 2 + 1), (cx, cy + ch / 2 - 2), "SECTIONS_GRID", GREY)
-        d.text((cx, cy + ch / 2 - 1.5), th, f"{s.label}  dig {s.cut_area:.2f} m2  fill {s.fill_area:.2f} m2",
+        d.text((cx, cy + ch / 2 - 1.5), th, f"{s.label}  cut {s.cut_area:.2f} m2  fill {s.fill_area:.2f} m2",
                "SECTIONS_TEXT", WHITE, align="center")
         g = [(cx + o, cy + (z - zc)) for o, z in zip(s.offsets, s.ground_xs) if np.isfinite(z)]
         d.poly(g, "SECTIONS_GROUND", BROWN)
@@ -203,6 +203,6 @@ def pad_dxf(path: str, t, outline, spots, name: str) -> str:
         d.text((x + size * 0.4, y + size * 0.2), size, f"{f:.2f}", "SPOT_FINISHED", GREEN)
         d.text((x + size * 0.4, y - size * 1.2), size * 0.8, f"{dz:+.2f}", "SPOT_DIG_FILL", RED if dz > 0 else BLUE)
     x0, y0, x1, y1 = d.ext
-    d.text((x0, y1 + 3 * size), size * 2, f"{name} - finished levels (green), dig + / fill - (red / blue)",
+    d.text((x0, y1 + 3 * size), size * 2, f"{name} - finished levels (green), cut + / fill - (red / blue)",
            "TEXT", WHITE)
     return d.save(path)

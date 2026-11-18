@@ -63,13 +63,50 @@ def test_level_fill_road(flat):
 def test_level_cut_road_with_and_without_ditch(flat):
     r = rdm.design_road(flat, LINE, plain(start_z=99.0))
     assert r.cut == pytest.approx(700, rel=0.005)          # 6 x 1 + 2 x (1 x 1 / 2)
-    d = rdm.design_road(flat, LINE, plain(start_z=99.0, ditch=True, ditch_w=0.5, ditch_d=0.5))
-    assert d.cut == pytest.approx(1100, rel=0.005)         # each side 0.625 + 0.75 + 1.125
+    d = rdm.design_road(flat, LINE, plain(start_z=99.0, ditch=True, ditch_w=0.5, ditch_d=0.5, ditch_in=1))
+    assert d.cut == pytest.approx(1100, rel=0.005)         # each side 0.625 + 0.75 + 1.125 (1 : 1 road side)
 
 
 def test_pavement_thickness_lowers_the_earthworks(flat):
-    r = rdm.design_road(flat, LINE, plain(start_z=101.0, pavement_t=0.3))
-    assert r.stations[3].fill_area == pytest.approx(6 * 0.7 + 2, rel=0.005)
+    r = rdm.design_road(flat, LINE, plain(start_z=101.0, pccp_t=0.3))
+    # embankment to 0.3 m below the surface; the layer edge on the 2 : 1 side slope (a triangle 0.3 high and
+    # 0.6 wide, 0.09 m² a side) is concrete / aggregate, not embankment: 6 x 0.7 + 2 - 2 x 0.09 = 6.02 m²
+    st = r.stations[3]
+    assert st.fill_area == pytest.approx(6 * 0.7 + 2 - 2 * 0.09, rel=0.005)
+    assert st.pccp_area == pytest.approx(1.8) and st.agg_area == pytest.approx(0.18)
+    # plans saved before 1.2 had one thickness: it loads as the concrete layer
+    old = rdm.design_from({"road": {"pavement_t": 0.3, "ditch": True, "ditch_w": 0.5}})
+    assert old.pccp_t == 0.3 and old.subbase_t == 0 and old.ditch_in == 1.0
+
+
+def test_dpwh_section_in_cut_v_ditch_and_layers(flat):
+    # surface 1 m below flat ground, PCCP 0.2 + subbase 0.2, V ditch 0.5 m deep (2 : 1 road side), cut 1.5 : 1.
+    # each side: 3 x 1.4 under the road + 1.25 down the road side of the ditch + 1.5 x 2.25 / 2 up the cut slope
+    rd = plain(start_z=99.0, pccp_t=0.2, subbase_t=0.2, ditch=True, ditch_w=0, ditch_d=0.5, ditch_in=2,
+               cut_ratio=1.5, ditch_toe=True)
+    r = rdm.design_road(flat, LINE, rd)
+    st = r.stations[3]
+    assert st.cut_area == pytest.approx(2 * (4.2 + 1.25 + 1.6875), rel=0.005) and st.fill_area == 0
+    assert st.right_catch == pytest.approx(6.25, abs=0.02) and st.left_catch == pytest.approx(-6.25, abs=0.02)
+    assert st.pccp_area == pytest.approx(1.2) and st.agg_area == pytest.approx(1.2)      # no layer edge in cut
+    assert r.cut == pytest.approx(1427.5, rel=0.005)
+    assert r.pccp_vol == pytest.approx(120, rel=1e-6) and r.agg_vol == pytest.approx(120, rel=1e-6)
+    assert r.pccp_area == pytest.approx(600, rel=1e-6)
+
+
+def test_dpwh_section_on_fill_with_toe_ditch(flat):
+    # surface 1 m above flat ground, layers 0.4 m, fill 2 : 1, V toe ditch 0.5 m deep, 2 : 1 in, 1.5 : 1 out.
+    # fill a side: 3 x 0.6 + 0.8 x 0.6 + 0.6 x 1.2 / 2 = 2.64; toe ditch (cut) a side: 1.75 x 0.5 / 2 = 0.4375
+    rd = plain(start_z=101.0, pccp_t=0.2, subbase_t=0.2, ditch=True, ditch_w=0, ditch_d=0.5, ditch_in=2,
+               ditch_out=1.5, ditch_toe=True)
+    r = rdm.design_road(flat, LINE, rd)
+    st = r.stations[3]
+    assert st.fill_area == pytest.approx(2 * 2.64, rel=0.005)
+    assert st.cut_area == pytest.approx(2 * 0.4375, rel=0.01)
+    assert st.right_catch == pytest.approx(6.75, abs=0.02)
+    assert st.agg_area == pytest.approx(1.2 + 2 * 0.5 * 2 * 0.16)          # subbase + two sloped layer edges
+    no_toe = rdm.design_road(flat, LINE, plain(**{**rd.__dict__, "ditch_toe": False}))
+    assert no_toe.stations[3].cut_area == 0 and no_toe.stations[3].right_catch == pytest.approx(5.0, abs=0.02)
 
 
 def test_crown_and_shoulders(flat):

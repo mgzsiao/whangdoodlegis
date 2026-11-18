@@ -1,5 +1,5 @@
 """Cross-sections across a lot / pad for the report: stations along the long side of the lot (or along the
-drainage slope), each section across it with its dig / fill areas, and end-area volumes between them.
+drainage slope), each section across it with its cut / fill areas, and end-area volumes between them.
 
 The quantities of the plan are computed on the elevation grid cell by cell (more exact); the sections
 and their end-area volumes are a check that engineers can follow by hand.
@@ -92,8 +92,8 @@ def sections(t: ew.Takeoff, outline, design: ew.PadDesign | None = None):
         prev = (s, ca, fa)
         zc_g = float(np.interp(0.0, offs_c, np.where(np.isfinite(zg), zg, np.nan)))
         zc_f = float(np.interp(0.0, offs_c, np.where(np.isfinite(zf), zf, np.nan)))
-        info = [("Distance from last", f"{dist:.2f} m"), ("Dig area", f"{ca:.2f} m²"), ("Fill area", f"{fa:.2f} m²"),
-                ("Dig volume since last", f"{cv:.2f} m³"), ("Fill volume since last", f"{fv:.2f} m³")]
+        info = [("Distance from last", f"{dist:.2f} m"), ("Cut area", f"{ca:.2f} m²"), ("Fill area", f"{fa:.2f} m²"),
+                ("Cut volume since last", f"{cv:.2f} m³"), ("Fill volume since last", f"{fv:.2f} m³")]
         if math.isfinite(zc_f):
             info.append(("Finished level", f"{zc_f:.3f} m"))
         if math.isfinite(zc_g):

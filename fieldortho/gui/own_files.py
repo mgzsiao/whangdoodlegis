@@ -25,7 +25,7 @@ REASONS = {
                  "and rivers. Not used in the calculation.",
     },
     "measure": {
-        "dtm": "Bare-ground levels: roads, lots and pads, dig and fill amounts, slopes and side views.",
+        "dtm": "Bare-ground levels: roads, lots and pads, cut and fill amounts, slopes and side views.",
         "dsm": "Ground plus piles, buildings and trees: needed to measure the volume of a stockpile or "
                "a building's height.",
         "ortho": "Optional. The photo shown under your drawing so you can see where to click. Also used to "

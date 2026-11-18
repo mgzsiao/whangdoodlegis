@@ -25,7 +25,7 @@ MAX_CELLS = 4_000_000       # cells read for one measurement (about 2000 x 2000)
 SLOPE_STEP = 0.5            # metres: ground slopes and 3-D lengths are measured over this distance,
                             # so 5 cm grass/noise roughness does not inflate them
 STEEP_BASE = 5.0            # metres: "steepest part" of a path is measured over this length
-DEFAULT_SWELL = 25.0        # % : dug soil takes about this much more space when loose
+DEFAULT_SWELL = 25.0        # % : excavated soil takes about this much more space when loose
 TRUCKS = (6.0, 10.0)        # m3: common dump truck sizes in the Philippines
 
 REFERENCES = {
@@ -268,7 +268,7 @@ class VolumeResult(AreaResult):
     reference: str = "edge"
     reference_text: str = ""
     level: float = float("nan")          # flat reference height (nan for the stretched edge surface)
-    cut_m3: float = 0.0                  # ground above the reference: to dig away
+    cut_m3: float = 0.0                  # ground above the reference: to cut away
     fill_m3: float = 0.0                 # ground below the reference: to fill in
     cut_area: float = 0.0
     fill_area: float = 0.0
@@ -343,13 +343,13 @@ def measure_volume(path: str, pts, reference: str = "edge", level: float | None 
 
 # ============================================================================ hauling
 def truck_trips(volume_m3: float, swell_pct: float = DEFAULT_SWELL, sizes=TRUCKS) -> tuple[float, list]:
-    """Loose volume after digging and the trips needed per truck size: (loose_m3, [(size, trips)])."""
+    """Loose volume after excavation and the trips needed per truck size: (loose_m3, [(size, trips)])."""
     loose = max(0.0, volume_m3) * (1 + swell_pct / 100.0)
     return loose, [(s, int(math.ceil(loose / s - 1e-9)) if loose > 0 else 0) for s in sizes if s > 0]
 
 
 def overlay_rgba(dz: np.ndarray, scale_m: float | None = None) -> np.ndarray:
-    """Red where ground is above the reference (dig), blue where below (fill)."""
+    """Red where ground is above the reference (cut), blue where below (fill)."""
     out = np.zeros(dz.shape + (4,), np.uint8)
     ok = np.isfinite(dz)
     if not ok.any():
@@ -378,7 +378,7 @@ RESULT_LABELS = {
     "climb_m": ("Total climb", "m"), "descent_m": ("Total descent", "m"), "steepest_pct": ("Steepest part", "%"),
     "perimeter_m": ("Perimeter", "m"), "area_m2": ("Flat area", "m²"), "surface_area_m2": ("Surface area", "m²"),
     "z_min_m": ("Lowest", "m"), "z_max_m": ("Highest", "m"), "z_mean_m": ("Average height", "m"),
-    "reference": ("Measured from", ""), "cut_m3": ("Dig (cut)", "m³"), "fill_m3": ("Fill", "m³"),
+    "reference": ("Measured from", ""), "cut_m3": ("Cut", "m³"), "fill_m3": ("Fill", "m³"),
     "net_m3": ("Net (cut − fill)", "m³"), "total_m3": ("Total moved", "m³"),
     "swell_pct": ("Soil loosening", "%"), "loose_m3": ("Loose volume to haul", "m³"),
     "compared_with": ("Compared with", ""), "raised_m3": ("Raised (added)", "m³"),
@@ -520,7 +520,7 @@ def export_measurements(items: list[Measurement], out_dir: str, base_name: str, 
     readme = base + "_README.txt"
     notes = ["Measurements from a drone elevation model: for planning and estimates only, not a survey.",
              "Heights are as recorded by the drone job (see the job README for the vertical datum).",
-             "Volumes: 'Dig (cut)' is ground above the chosen reference, 'Fill' is space below it. "
+             "Volumes: 'Cut' is ground above the chosen reference, 'Fill' is space below it. "
              "Net = cut - fill. Loose volume adds the soil loosening factor for hauling."]
     for fmt in formats:
         n = ex.format_note(fmt, dst_crs)
@@ -535,7 +535,7 @@ def export_measurements(items: list[Measurement], out_dir: str, base_name: str, 
 class CompareResult:
     area: AreaResult
     raised_m3: float           # ground higher in the later survey (filled, piled up, deposited)
-    lowered_m3: float          # ground lower in the later survey (dug, eroded, hauled away)
+    lowered_m3: float          # ground lower in the later survey (excavated, eroded, hauled away)
     raised_area: float
     lowered_area: float
     max_raise: float

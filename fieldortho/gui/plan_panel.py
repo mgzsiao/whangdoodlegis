@@ -146,7 +146,7 @@ class ExportDialog(QDialog):
         f.addRow("Location", self.location)
         f.addRow("Prepared by", self.by)
         self.spacing = spin(1, 50, float(p.get("spacing", 5.0)), " m", 1, 1.0)
-        self.spacing.setToolTip("Spot levels (ground, finished, dig/fill depth) are listed on a grid this far apart.")
+        self.spacing.setToolTip("Spot levels (ground, finished, cut/fill depth) are listed on a grid this far apart.")
         f.addRow("Spot levels every", self.spacing)
         lay.addLayout(f)
         lay.addWidget(label("Coordinate system for the files", "H2"))
@@ -156,7 +156,7 @@ class ExportDialog(QDialog):
         self.fmts = FormatChecks(["gpkg", "shp", "geojson", "kml", "dxf"], True,
                                  p.get("formats", ["gpkg", "kml", "dxf"]))
         lay.addWidget(self.fmts)
-        self.rasters = QCheckBox("Dig/fill depth and finished ground as GeoTIFF, colour map as PNG")
+        self.rasters = QCheckBox("Cut/fill depth and finished ground as GeoTIFF, colour map as PNG")
         self.rasters.setChecked(True)
         lay.addWidget(self.rasters)
         if road:
@@ -274,7 +274,7 @@ class PlanPanel(QWidget):
         self.cards = {}
         for key, title, text in (
                 ("pad", "Level a lot or building pad",
-                 "Make the ground flat (or gently sloped for rain) at a chosen height. Shows how much to dig and "
+                 "Make the ground flat (or gently sloped for rain) at a chosen height. Shows how much to cut and "
                  "fill, the sides, and the trucks needed."),
                 ("pile", "Measure a pile, hole or landslide deposit",
                  "How much soil, gravel or debris is there, or how much is needed to fill a hole.")):
@@ -284,7 +284,7 @@ class PlanPanel(QWidget):
             self.cards[key] = c
         c = ChoiceCard("road", "Road, path or canal",
                        "Draw the line it follows. The app checks the ground every 5\u201320 m, sets the road height, "
-                       "builds the cross-sections from your road shape and adds up the digging and filling.")
+                       "builds the cross-sections from your road shape and adds up the cut and fill.")
         c.clicked.connect(self._choose_type)
         lay.addWidget(c)
         self.cards["road"] = c
@@ -323,8 +323,8 @@ class PlanPanel(QWidget):
 
     def _p_height(self, lay):
         self.hgroup = QButtonGroup(self)
-        self.rb_bal = radio_block(self.hgroup, "balanced", "Balanced: dig = fill",
-                                  "The app finds the height where the soil you dig is just enough for the fill. "
+        self.rb_bal = radio_block(self.hgroup, "balanced", "Balanced: cut = fill",
+                                  "The app finds the height where the soil you cut is just enough for the fill. "
                                   "Least soil to haul in or out.", lay)
         self.rb_fix = radio_block(self.hgroup, "fixed", "At a height I choose",
                                   "For example the road level, a floor level on the plans, or above the flood line.",
@@ -380,7 +380,7 @@ class PlanPanel(QWidget):
         self.fill_r = spin(0.2, 10, 1.5, "  : 1", 1, 0.25, 110)
         g.addWidget(QLabel("Soil"), 0, 0)
         g.addWidget(self.soil, 0, 1, 1, 2)
-        g.addWidget(QLabel("Dug sides"), 1, 0)
+        g.addWidget(QLabel("Cut sides"), 1, 0)
         g.addWidget(self.cut_r, 1, 1)
         g.addWidget(label("out : up", "Hint"), 1, 2)
         g.addWidget(QLabel("Filled sides"), 2, 0)
@@ -390,7 +390,7 @@ class PlanPanel(QWidget):
         lay.addWidget(explain("1.5 : 1 means the side goes 1.5 m out for every 1 m of height. Gentler sides are "
                               "safer against slides but take more room. Ask an engineer for high or steep sides."))
         self.rb_walls = radio_block(self.egroup, "walls", "Straight walls (retaining wall or riprap)",
-                                    "The digging and filling stop at the outline. The wall itself is not counted.",
+                                    "The cut and fill stop at the outline. The wall itself is not counted.",
                                     lay)
         self.rb_slopes.setChecked(True)
         self.soil.currentIndexChanged.connect(self._soil_changed)
@@ -591,7 +591,7 @@ class PlanPanel(QWidget):
         row.addWidget(self.max_grade)
         row.addStretch(1)
         lay.addLayout(row)
-        radio_block(self.pgroup, "follow", "Follow the ground", "Least digging: the road goes up and down with the "
+        radio_block(self.pgroup, "follow", "Follow the ground", "Least cut and fill: the road goes up and down with the "
                     "land, only smoothed.", lay)
         radio_block(self.pgroup, "level", "Keep it level", "One height (the starting height) for the whole road.", lay)
         radio_block(self.pgroup, "straight", "One straight slope from start to end", "", lay)
@@ -619,7 +619,7 @@ class PlanPanel(QWidget):
         for b in self.pgroup.buttons():
             b.toggled.connect(self._changed)
         lay.addWidget(explain("8% means the road rises 8 m for every 100 m. Gentler slopes are easier for loaded "
-                              "trucks but usually need more digging. The heights are the road surface at the centre."))
+                              "trucks but usually need more cut and fill. The heights are the road surface at the centre."))
 
     def _p_vcurves(self, lay):
         lay.addWidget(label("Where the road changes from one slope to another (a grade change point, PVI), it can "
@@ -865,8 +865,8 @@ class PlanPanel(QWidget):
         lay.addWidget(self.preview)
         g = QGridLayout()
         g.setVerticalSpacing(6)
-        self.r_width = spin(1, 40, 6.0, " m", 2, 0.1, 110)
-        self.r_crown = spin(0, 10, 2.0, " %", 1, 0.5, 110)
+        self.r_width = spin(1, 40, 5.0, " m", 2, 0.1, 110)
+        self.r_crown = spin(0, 10, 1.5, " %", 1, 0.5, 110)
         g.addWidget(QLabel("Road width"), 0, 0)
         g.addWidget(self.r_width, 0, 1)
         g.addWidget(label("the part vehicles drive on, edge to edge", "Hint", wrap=True), 0, 2)
@@ -876,47 +876,66 @@ class PlanPanel(QWidget):
         self.r_sh = QCheckBox("Shoulders")
         self.r_sh.setChecked(True)
         self.r_sh_w = spin(0.1, 10, 1.5, " m", 2, 0.1, 110)
-        self.r_sh_p = spin(0, 15, 4.0, " %", 1, 0.5, 110)
+        self.r_sh_p = spin(0, 15, 3.0, " %", 1, 0.5, 110)
         g.addWidget(self.r_sh, 2, 0)
         g.addWidget(self.r_sh_w, 2, 1)
         g.addWidget(label("each side", "Hint"), 2, 2)
         g.addWidget(QLabel("   sloping"), 3, 0)
         g.addWidget(self.r_sh_p, 3, 1)
         g.addWidget(label("away from the road", "Hint"), 3, 2)
-        self.r_ditch = QCheckBox("Ditches where the road is dug in")
-        g.addWidget(self.r_ditch, 4, 0, 1, 3)
-        self.r_ditch_w = spin(0.1, 5, 0.5, " m", 2, 0.1, 110)
+        self.r_pccp = spin(0, 600, 200, " mm", 0, 10, 110)
+        self.r_sub = spin(0, 600, 200, " mm", 0, 10, 110)
+        g.addWidget(QLabel("Concrete (PCCP)"), 4, 0)
+        g.addWidget(self.r_pccp, 4, 1)
+        g.addWidget(label("the slab vehicles drive on", "Hint", wrap=True), 4, 2)
+        g.addWidget(QLabel("Aggregate subbase"), 5, 0)
+        g.addWidget(self.r_sub, 5, 1)
+        g.addWidget(label("under the concrete and the shoulders; cut and fill stop at its bottom", "Hint",
+                          wrap=True), 5, 2)
+        self.r_ditch = QCheckBox("Road side ditches where the road is in cut")
+        self.r_ditch.setChecked(True)
+        g.addWidget(self.r_ditch, 6, 0, 1, 3)
         self.r_ditch_d = spin(0.1, 3, 0.5, " m", 2, 0.1, 110)
-        g.addWidget(QLabel("   bottom width"), 5, 0)
-        g.addWidget(self.r_ditch_w, 5, 1)
-        g.addWidget(QLabel("   depth"), 6, 0)
-        g.addWidget(self.r_ditch_d, 6, 1)
-        g.addWidget(label("below the shoulder edge", "Hint"), 6, 2)
-        self.r_pave = spin(0, 2, 0.0, " m", 2, 0.05, 110)
-        g.addWidget(QLabel("Pavement + base"), 7, 0)
-        g.addWidget(self.r_pave, 7, 1)
-        g.addWidget(label("e.g. 0.20 m concrete + 0.15 m gravel = 0.35 m; digging goes this much deeper", "Hint",
-                          wrap=True), 7, 2)
+        self.r_ditch_w = spin(0, 5, 0.0, " m", 2, 0.1, 110)
+        self.r_ditch_in = spin(0.5, 10, 2.0, "  : 1", 1, 0.25, 110)
+        g.addWidget(QLabel("   depth"), 7, 0)
+        g.addWidget(self.r_ditch_d, 7, 1)
+        g.addWidget(label("below the shoulder edge", "Hint"), 7, 2)
+        g.addWidget(QLabel("   bottom width"), 8, 0)
+        g.addWidget(self.r_ditch_w, 8, 1)
+        g.addWidget(label("0 = V-shaped (DPWH)", "Hint", wrap=True), 8, 2)
+        g.addWidget(QLabel("   road side"), 9, 0)
+        g.addWidget(self.r_ditch_in, 9, 1)
+        g.addWidget(label("out : down", "Hint", wrap=True), 9, 2)
+        self.r_ditch_toe = QCheckBox("Also a ditch at the toe of the fill")
+        self.r_ditch_toe.setChecked(True)
+        g.addWidget(self.r_ditch_toe, 10, 0, 1, 3)
+        self.r_ditch_out = spin(0.5, 10, 1.5, "  : 1", 1, 0.25, 110)
+        g.addWidget(QLabel("   its outer side"), 11, 0)
+        g.addWidget(self.r_ditch_out, 11, 1)
+        g.addWidget(label("out : up", "Hint", wrap=True), 11, 2)
         self.r_soil = QComboBox()
         for k, (name, _c, _f, _d) in ew.SOILS.items():
             self.r_soil.addItem(name, k)
-        self.r_cut = spin(0.2, 10, 1.0, "  : 1", 1, 0.25, 110)
-        self.r_fill = spin(0.2, 10, 1.5, "  : 1", 1, 0.25, 110)
-        g.addWidget(QLabel("Soil for the sides"), 8, 0)
-        g.addWidget(self.r_soil, 8, 1, 1, 2)
-        g.addWidget(QLabel("Dug sides"), 9, 0)
-        g.addWidget(self.r_cut, 9, 1)
-        g.addWidget(label("out : up", "Hint"), 9, 2)
-        g.addWidget(QLabel("Filled sides"), 10, 0)
-        g.addWidget(self.r_fill, 10, 1)
-        g.addWidget(label("out : up", "Hint"), 10, 2)
+        self.r_soil.setCurrentIndex(self.r_soil.findData("custom"))
+        self.r_cut = spin(0.2, 10, 1.5, "  : 1", 1, 0.25, 110)
+        self.r_fill = spin(0.2, 10, 2.0, "  : 1", 1, 0.25, 110)
+        g.addWidget(QLabel("Soil for the sides"), 12, 0)
+        g.addWidget(self.r_soil, 12, 1, 1, 2)
+        g.addWidget(QLabel("Cut sides"), 13, 0)
+        g.addWidget(self.r_cut, 13, 1)
+        g.addWidget(label("out : up", "Hint"), 13, 2)
+        g.addWidget(QLabel("Filled sides"), 14, 0)
+        g.addWidget(self.r_fill, 14, 1)
+        g.addWidget(label("out : up", "Hint"), 14, 2)
         g.setColumnStretch(2, 1)
         lay.addLayout(g)
-        lay.addWidget(explain("These are starting values: change them to match your road. A DPWH road-class "
-                              "option comes in the next version."))
-        for w_ in (self.r_width, self.r_crown, self.r_sh_w, self.r_sh_p, self.r_ditch_w, self.r_ditch_d, self.r_pave):
+        lay.addWidget(explain("Starting values are DPWH's (under 200 vehicles a day). Choose a road standard above "
+                              "to fill in its values; every value can still be changed."))
+        for w_ in (self.r_width, self.r_crown, self.r_sh_w, self.r_sh_p, self.r_ditch_w, self.r_ditch_d,
+                   self.r_ditch_in, self.r_ditch_out, self.r_pccp, self.r_sub):
             w_.valueChanged.connect(self._shape_changed)
-        for c_ in (self.r_sh, self.r_ditch):
+        for c_ in (self.r_sh, self.r_ditch, self.r_ditch_toe):
             c_.toggled.connect(self._shape_changed)
         self.r_soil.currentIndexChanged.connect(self._r_soil_changed)
         self.r_cut.valueChanged.connect(self._r_ratio_edited)
@@ -926,21 +945,30 @@ class PlanPanel(QWidget):
         k = self.r_std.currentData()
         st = rdm.STANDARDS.get(k)
         if st:
-            for w_, key in ((self.r_width, "width"), (self.r_crown, "crown_pct"), (self.r_sh_w, "shoulder_w"),
-                            (self.r_sh_p, "shoulder_pct"), (self.r_pave, "pavement_t")):
+            for w_, key, k_ in ((self.r_width, "width", 1), (self.r_crown, "crown_pct", 1),
+                                (self.r_sh_w, "shoulder_w", 1), (self.r_sh_p, "shoulder_pct", 1),
+                                (self.r_pccp, "pccp_t", 1000), (self.r_sub, "subbase_t", 1000),
+                                (self.r_ditch_d, "ditch_d", 1), (self.r_ditch_w, "ditch_w", 1),
+                                (self.r_ditch_in, "ditch_in", 1), (self.r_ditch_out, "ditch_out", 1)):
                 w_.blockSignals(True)
-                w_.setValue(st[key])
+                w_.setValue(st[key] * k_)
                 w_.blockSignals(False)
-            self.r_sh.setChecked(True)
-            self.r_soil.setCurrentIndex(self.r_soil.findData("firm"))
+            for c_, key in ((self.r_sh, "shoulders"), (self.r_ditch, "ditch"), (self.r_ditch_toe, "ditch_toe")):
+                c_.blockSignals(True)
+                c_.setChecked(st[key])
+                c_.blockSignals(False)
+            self.r_soil.blockSignals(True)
+            self.r_soil.setCurrentIndex(self.r_soil.findData("custom"))
+            self.r_soil.blockSignals(False)
             self.r_cut.setValue(st["cut_ratio"])
             self.r_fill.setValue(st["fill_ratio"])
             self.std_note.setText(
-                f"From {rdm.DPWH_SOURCE}. Width {st['width']:g} m, concrete at least {st['pavement_t'] * 1000:.0f} mm "
-                f"(base course is not set there: add yours), shoulders {st['shoulder_w']:g} m gravel, cross slope "
-                f"1.5% (shoulders 3%), curves at least {st['min_radius']:g} m radius, grades up to "
-                f"{st['max_grade']:g}%, design speed {st['speed']}. You can still change any value; the app then "
-                "warns you where the plan is outside the standard.")
+                f"From {rdm.DPWH_SOURCE}: width {st['width']:g} m, concrete (PCCP) at least {st['pccp_t'] * 1000:.0f} mm, "
+                f"shoulders {st['shoulder_w']:g} m gravel, cross slope 1.5% (shoulders 3%), curves at least "
+                f"{st['min_radius']:g} m radius, grades up to {st['max_grade']:g}%, design speed {st['speed']}. "
+                f"From the {rdm.SECTION_SOURCE}: aggregate subbase {st['subbase_t'] * 1000:.0f} mm, fill sides 2 : 1, "
+                "V-shaped road side ditch (2 : 1 road side, 1.5 : 1 outer side; 0.50 m deep is our suggestion). "
+                "You can still change any value; the app then warns you where the plan is outside the standard.")
         else:
             self.std_note.setText("Type the values for your road. Choose a DPWH standard above to fill them in.")
         self._shape_changed()
@@ -948,8 +976,10 @@ class PlanPanel(QWidget):
     def _shape_changed(self, *_):
         self.r_sh_w.setEnabled(self.r_sh.isChecked())
         self.r_sh_p.setEnabled(self.r_sh.isChecked())
-        self.r_ditch_w.setEnabled(self.r_ditch.isChecked())
-        self.r_ditch_d.setEnabled(self.r_ditch.isChecked())
+        on = self.r_ditch.isChecked()
+        for w_ in (self.r_ditch_w, self.r_ditch_d, self.r_ditch_in, self.r_ditch_toe):
+            w_.setEnabled(on)
+        self.r_ditch_out.setEnabled(on and self.r_ditch_toe.isChecked())
         self.preview.set_design(self.road_design())
         self._changed()
 
@@ -983,7 +1013,9 @@ class PlanPanel(QWidget):
             end_z=self.end_z.value(), targets=targets, width=self.r_width.value(), crown_pct=self.r_crown.value(),
             shoulders=self.r_sh.isChecked(), shoulder_w=self.r_sh_w.value(), shoulder_pct=self.r_sh_p.value(),
             ditch=self.r_ditch.isChecked(), ditch_w=self.r_ditch_w.value(), ditch_d=self.r_ditch_d.value(),
-            pavement_t=self.r_pave.value(), soil=self.r_soil.currentData(), cut_ratio=self.r_cut.value(),
+            ditch_in=self.r_ditch_in.value(), ditch_out=self.r_ditch_out.value(),
+            ditch_toe=self.r_ditch_toe.isChecked(), pccp_t=self.r_pccp.value() / 1000,
+            subbase_t=self.r_sub.value() / 1000, soil=self.r_soil.currentData(), cut_ratio=self.r_cut.value(),
             fill_ratio=self.r_fill.value(), swell_pct=self.swell.value(), shrink_pct=self.shrink.value(),
             truck_m3=self.truck.value(), radii=self.curve_radii(), standard=self.r_std.currentData() or "",
             min_radius=rdm.STANDARDS.get(self.r_std.currentData() or "", {}).get("min_radius", 0.0),
@@ -997,7 +1029,7 @@ class PlanPanel(QWidget):
         self.shrink = spin(0, 50, ew.DEFAULT_SHRINK, " %", 0, 5, 90)
         self.truck = spin(0, 60, 0, " m³", 1, 1, 100)
         self.truck.setSpecialValueText("none")
-        self.swell_lab = QLabel("Dug soil loosens by")
+        self.swell_lab = QLabel("Excavated soil loosens by")
         g.addWidget(self.swell_lab, 0, 0)
         g.addWidget(self.swell, 0, 1)
         self.swell_hint = label("", "Hint", wrap=True)
@@ -1153,7 +1185,7 @@ class PlanPanel(QWidget):
             lines.append(f"✔ Area: {Polygon(self.page.pts).area:,.0f} m², heights from "
                          f"{'bare ground' if self.src.currentData() == 'dtm' else 'ground + objects (DSM)'}")
         if "height" in steps:
-            lines.append("✔ Height: " + ("balanced (dig = fill)" if self.rb_bal.isChecked() else
+            lines.append("✔ Height: " + ("balanced (cut = fill)" if self.rb_bal.isChecked() else
                                               f"{self.level.value():.2f} m") +
                          (f", {self.slope.value():g}% slope" if self.slope_cb.isChecked() else ", level"))
         if "edges" in steps:
@@ -1222,7 +1254,7 @@ class PlanPanel(QWidget):
             self.src_hint.setText("For a stockpile choose the second option: the bare-ground model may have removed "
                                   "the pile.")
         elif self.kind in ("pad", "road") and self.src.currentData() == "dsm":
-            self.src_hint.setText("Use bare ground, otherwise trees and houses count as soil to dig.")
+            self.src_hint.setText("Use bare ground, otherwise trees and houses count as soil to cut.")
         else:
             self.src_hint.setText("")
 
@@ -1334,13 +1366,13 @@ class PlanPanel(QWidget):
         self.shrink_lab.setVisible(pad)
         self.shrink_hint.setVisible(pad)
         if pad:
-            self.swell_lab.setText("Dug soil loosens by")
-            self.swell_hint.setText("Soil dug from the ground takes more space in a truck: about 25% more for "
+            self.swell_lab.setText("Excavated soil loosens by")
+            self.swell_hint.setText("Soil cut from the ground takes more space in a truck: about 25% more for "
                                     "common earth. Used for the truck trips.")
         else:
             self.swell_lab.setText("Extra space in the truck")
             self.swell_hint.setText("A stockpile is already loose: 0%. If you measure packed ground or a landslide "
-                                    "deposit that will be dug up, use about 25%.")
+                                    "deposit that will be excavated, use about 25%.")
 
     def _changed(self, *_):
         self.takeoff = None
@@ -1412,7 +1444,7 @@ class PlanPanel(QWidget):
         if t is None:
             return
         h = t.haul
-        self.estimate.setText(f"<b>With these choices:</b> dig {t.cut:,.0f} m³ · fill {t.fill:,.0f} m³<br>"
+        self.estimate.setText(f"<b>With these choices:</b> cut {t.cut:,.0f} m³ · fill {t.fill:,.0f} m³<br>"
                               f"{h.sentence()}")
         self.road_box.setVisible(False)
         if self.step() != "result":
@@ -1425,11 +1457,11 @@ class PlanPanel(QWidget):
             self._show_road(t)
             return
         pile = t.kind == "pile"
-        cards = [StatCard("Above (pile)" if pile else "Dig (cut)", f"{t.cut:,.0f} m³", f"highest {t.max_cut:.2f} m"
+        cards = [StatCard("Above (pile)" if pile else "Cut", f"{t.cut:,.0f} m³", f"highest {t.max_cut:.2f} m"
                           if pile else f"deepest {t.max_cut:.2f} m"),
                  StatCard("Below (hole)" if pile else "Fill", f"{t.fill:,.0f} m³", f"deepest {t.max_fill:.2f} m"),
-                 StatCard("Net", f"{t.net:,.0f} m³", "dig − fill"),
-                 StatCard("Total moved", f"{t.total:,.0f} m³", "dig + fill"),
+                 StatCard("Net", f"{t.net:,.0f} m³", "cut − fill"),
+                 StatCard("Total moved", f"{t.total:,.0f} m³", "cut + fill"),
                  StatCard("Flat area", f"{t.area.area_2d:,.0f} m²", f"{t.area.area_2d / 1e4:.3f} ha"),
                  StatCard("Finished height" if t.kind == "pad" else "Surface area",
                           (f"{t.level:.2f} m" if t.kind == "pad" else f"{t.area.area_3d:,.0f} m²"),
@@ -1443,7 +1475,7 @@ class PlanPanel(QWidget):
             g.addWidget(c, i // 2, i % 2)
         self.res_box.addLayout(g)
         if t.kind == "pad" and t.side_cut == t.side_cut and (t.side_cut > 0 or t.side_fill > 0):
-            self.res_box.addWidget(label(f"Of these, the sloped sides: dig {t.side_cut:,.0f} m³, fill "
+            self.res_box.addWidget(label(f"Of these, the sloped sides: cut {t.side_cut:,.0f} m³, fill "
                                          f"{t.side_fill:,.0f} m³. Ground worked including the sides: "
                                          f"{t.works_area:,.0f} m².", "Hint", wrap=True))
         box = QWidget()
@@ -1462,13 +1494,13 @@ class PlanPanel(QWidget):
         if t.no_data_pct > 2:
             self.res_box.addWidget(IssueBox("warning", f"{t.no_data_pct:.0f}% has no height data",
                                             "Part of the outline is off the drone map or in a gap."))
-        self.res_box.addWidget(label("Red on the map = dig, blue = fill.", "Hint"))
+        self.res_box.addWidget(label("Red on the map = cut, blue = fill.", "Hint"))
 
     def _show_road(self, r):
-        cards = [StatCard("Dig (cut)", f"{r.cut:,.0f} m³", f"deepest {r.deepest_cut:.2f} m at the centre"),
+        cards = [StatCard("Cut", f"{r.cut:,.0f} m³", f"deepest {r.deepest_cut:.2f} m at the centre"),
                  StatCard("Fill", f"{r.fill:,.0f} m³", f"highest {r.highest_fill:.2f} m at the centre"),
-                 StatCard("Net", f"{r.net:,.0f} m³", "dig \u2212 fill"),
-                 StatCard("Total moved", f"{r.total:,.0f} m³", "dig + fill"),
+                 StatCard("Net", f"{r.net:,.0f} m³", "cut \u2212 fill"),
+                 StatCard("Total moved", f"{r.total:,.0f} m³", "cut + fill"),
                  StatCard("Length", f"{r.length:,.0f} m", f"{len(r.stations)} stations"),
                  StatCard("Steepest part", f"{r.steepest:.1f} %", f"near {rdm.station_label(r.steepest_at)}")]
         cards[0].t.setStyleSheet(f"color: {theme.CUT_TEXT};")
@@ -1508,7 +1540,7 @@ class PlanPanel(QWidget):
         if r.no_data:
             self.res_box.addWidget(IssueBox("warning", "Off the map",
                                             f"{r.no_data} station(s) are outside the drone map or in a gap."))
-        self.res_box.addWidget(label("On the map the strip shows the ground worked: red = mostly dig, blue = mostly "
+        self.res_box.addWidget(label("On the map the strip shows the ground worked: red = mostly cut, blue = mostly "
                                      "fill.", "Hint", wrap=True))
         self.road_box.setVisible(True)
         self.st_slider.blockSignals(True)
@@ -1527,8 +1559,8 @@ class PlanPanel(QWidget):
         st = r.stations[i]
         self.st_label.setText(st.label)
         self.st_info.setText(f"Ground {st.ground:.2f} m, road {st.design:.2f} m ("
-                             + (f"dig {st.depth:.2f} m" if st.depth >= 0 else f"fill {-st.depth:.2f} m")
-                             + f" at the centre). Dig {st.cut_area:.2f} m², fill {st.fill_area:.2f} m².")
+                             + (f"cut {st.depth:.2f} m" if st.depth >= 0 else f"fill {-st.depth:.2f} m")
+                             + f" at the centre). Cut {st.cut_area:.2f} m², fill {st.fill_area:.2f} m².")
         self.sec_view.set_station(st)
         self.page.select_station(i)
 
@@ -1630,7 +1662,7 @@ class PlanPanel(QWidget):
                                           folder=folder or os.path.dirname(self.plan_path),
                                           size=(f"{t.length:,.0f} m road" if self.kind == "road"
                                                 else f"{t.area.area_2d:,.0f} m²"), crs="",
-                                          status=f"{status} · dig {t.cut:,.0f} / fill {t.fill:,.0f} m³"))
+                                          status=f"{status} · cut {t.cut:,.0f} / fill {t.fill:,.0f} m³"))
 
     def export(self):
         if self.takeoff is None or self.page.job is None:
@@ -1720,7 +1752,11 @@ class PlanPanel(QWidget):
         self.r_ditch.setChecked(rd.ditch)
         self.r_ditch_w.setValue(rd.ditch_w)
         self.r_ditch_d.setValue(rd.ditch_d)
-        self.r_pave.setValue(rd.pavement_t)
+        self.r_ditch_in.setValue(rd.ditch_in)
+        self.r_ditch_out.setValue(rd.ditch_out)
+        self.r_ditch_toe.setChecked(rd.ditch_toe)
+        self.r_pccp.setValue(rd.pccp_t * 1000)
+        self.r_sub.setValue(rd.subbase_t * 1000)
         self.r_soil.setCurrentIndex(max(0, self.r_soil.findData(rd.soil)))
         self.r_cut.setValue(rd.cut_ratio)
         self.r_fill.setValue(rd.fill_ratio)

@@ -2,7 +2,7 @@
 
 Each section is drawn at TRUE SCALE (one metre across = one metre up, the same scale for every
 section of the report) on a 1 m / 2 m / 5 m grid with offsets along the bottom and elevations on the
-left, the ground (brown) and the finished surface (navy) with dig / fill shading, slope labels on each
+left, the ground (brown) and the finished surface (navy) with cut / fill shading, slope labels on each
 part of the finished surface, the ground and finished elevations at the centre line, and a box with that
 station's areas and volumes, so a section can be checked without turning to other tables.
 Sections are packed onto A4 pages as many as fit while staying readable.
@@ -112,7 +112,7 @@ def panels(sections: list[SectionData], note: str = "") -> list[Image.Image]:
             dr.text((L - 10 - tw, Y - 11), lab, font=fs, fill=MUTED)
             zz += step
         dr.rectangle([L, T, L + 2 * half * ppm, T + ph], outline=MUTED, width=2)
-        # dig / fill shading
+        # cut / fill shading
         o, g, d = s.offsets, s.ground, s.design
         for i in range(len(o) - 1):
             if not (np.isfinite(g[i]) and np.isfinite(d[i]) and np.isfinite(g[i + 1]) and np.isfinite(d[i + 1])):
@@ -182,7 +182,7 @@ def panels(sections: list[SectionData], note: str = "") -> list[Image.Image]:
         dr.text((bx + 12, by + 5), s.title, font=_font(22, True), fill=(255, 255, 255))
         for j, (k_, v) in enumerate(rows):
             yy = by + rh * (j + 1) + 6
-            col = CUT_RGB if k_.lower().startswith("dig") else FILL_RGB if k_.lower().startswith("fill") else INK
+            col = CUT_RGB if k_.lower().startswith("cut") else FILL_RGB if k_.lower().startswith("fill") else INK
             dr.text((bx + 12, yy), k_, font=f, fill=col)
             tw = dr.textlength(v, font=_font(24, True))
             dr.text((bx + BOX_W - 12 - tw, yy), v, font=_font(24, True), fill=INK)

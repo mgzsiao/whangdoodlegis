@@ -148,7 +148,7 @@ class HomePage(Page):
         t3.button.clicked.connect(self.open_models.emit)
         t4 = ToolCard("measure", "Measure & earthworks",
                       "Measure heights, paths, areas and volumes on a drone map: stockpiles, lots to level, "
-                      "how much soil to dig or fill.", "Open drone map")
+                      "how much soil to cut or fill.", "Open drone map")
         t4.button.clicked.connect(self.open_measure.emit)
         for t in (t1, t2, t3, t4):
             tiles.addWidget(t, 1)

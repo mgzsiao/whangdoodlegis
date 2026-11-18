@@ -124,7 +124,7 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
   outline import from KML/KMZ/GPX/SHP/GPKG/GeoJSON/DXF; typed corners; plans saved to
   `<job>/Earthworks/<name>.plan.json`, listed in Jobs as "Earthworks plan"). `core/earthworks_report.py` writes
   the package: PDF (Qt QPdfWriter + QTextDocument), Excel (openpyxl, new dependency), CSVs, GPKG/KML/DXF/...
-  layers (outline, cut_fill_zones, spot_levels), dig/fill depth + finished ground GeoTIFFs, PNG map.
+  layers (outline, cut_fill_zones, spot_levels), cut/fill depth + finished ground GeoTIFFs, PNG map.
   Tests `tests/test_earthworks.py`; walkthrough `tests/gui_walkthrough4.py` (synthetic site in
   `tests/synthetic_site.py`).
 - Stage 3 done (0.6.0): road assistant in Plan earthworks ("Road, path or canal"): `core/road.py` (stations
@@ -181,8 +181,14 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     (`core/convert.py`: any shapefile part brings in its .shp, folders with optional sub-folders, .zip read in place
     via /vsizip/, parts-found check, missing .shx rebuilt in a temp copy, missing .dbf = shapes only,
     `identify()` says how the CRS was found; GPKG/KML/GeoJSON/DXF/GPX/rasters still accepted).
-  - B "dig" -> "Cut" everywhere + DPWH terms, PCCP + aggregate subbase layers, DPWH ditch, 2:1 fill;
-    C guided road steps (Back / Change dimensions / OK, next), curve minimums R 30 m (Tourism 50 m), vertical
+  - B done: "dig" -> "Cut" everywhere (GUI, reports, CSV/GIS fields `cut_fill_m`, zone type "cut"). Road shape
+    (`core/road.py`): `pccp_t` + `subbase_t` (property `pavement_t` = total; earthworks stop at the subgrade);
+    on fill the sloped layer edge (½ x fill ratio x T² a side) is aggregate, not embankment; road side ditch
+    V-shaped by default (`ditch_w` 0), road side `ditch_in` : 1, optional toe ditch (`ditch_toe`, outer side
+    `ditch_out`) counted as cut; layer quantities `pccp_vol` / `pccp_area` / `agg_vol`. DPWH presets labelled by
+    traffic ("Under 200 vehicles a day", "200 to 400 vehicles a day", "Tourism road") with subbase 200 mm, fill
+    2 : 1, cut 1.5 : 1 (Figure 3). `design_from` loads pre-1.2 plans unchanged (pavement_t -> pccp_t, ditch 1 : 1).
+  - C guided road steps (Back / Change dimensions / OK, next), curve minimums R 30 m (Tourism 50 m), vertical
     curves >= 60 m with explanations; D "follow the ground" with the designer's requirements; E superelevation
     (AASHTO Method 5, emax 6%), widening (AASHTO, SU truck), AASHTO 1993 rigid check; F canal model + design flow
     by the Rational Method (show the owner the runoff-coefficient table and its source first); G new report

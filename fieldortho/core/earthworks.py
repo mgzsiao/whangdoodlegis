@@ -5,7 +5,7 @@ balanced height. Outside the outline the work either stops at a wall, or meets t
 sloped sides (cut slopes rise, fill slopes fall away from the pad edge at H:V ratios).
 
 All volumes are "bank" volumes (as measured in the ground). Hauling uses two soil factors:
-  swell  - dug soil takes more space when loose (truck loads)
+  swell  - excavated soil takes more space when loose (truck loads)
   shrink - fill packed down needs more soil than the space it fills
 """
 from __future__ import annotations
@@ -89,7 +89,7 @@ class Haul:
                 return f"Hauling it all away: {self.loose:,.0f} m³ loose, {trips}."
             return f"Filling it needs about {-self.balance:,.0f} m³ of soil ({self.loose:,.0f} m³ loose): {trips}."
         if abs(self.balance) < max(1.0, 0.01 * (self.cut + self.fill)):
-            return "The dug soil is just enough for the fill: almost nothing needs to be hauled."
+            return "The cut soil is just enough for the fill: almost nothing needs to be hauled."
         trips = " or ".join(f"~{n:,} trips with {s:g} m³ trucks" for s, n in self.trips)
         if self.balance > 0:
             return f"About {self.balance:,.0f} m³ of extra soil ({self.loose:,.0f} m³ loose) must be hauled away: {trips}."
@@ -119,7 +119,7 @@ class Takeoff:
     works_area: float                 # ground touched, sides included
     haul: Haul
     inputs: list                      # [(label, value)] for the report
-    dz: np.ndarray = field(repr=False)          # ground - finished (+ dig, - fill), NaN where untouched
+    dz: np.ndarray = field(repr=False)          # ground - finished (+ cut, - fill), NaN where untouched
     ground: np.ndarray = field(repr=False)
     finished: np.ndarray = field(repr=False)    # finished ground (pad) / reference surface (pile)
     transform: object = field(repr=False)
@@ -164,7 +164,7 @@ class Takeoff:
                      f"{self.level_low:.2f} m)")
         else:
             shape = f"level at {self.level:.2f} m"
-        return f"To finish the {a:,.0f} m² lot {shape}, dig about {self.cut:,.0f} m³ and fill about " \
+        return f"To finish the {a:,.0f} m² lot {shape}, cut about {self.cut:,.0f} m³ and fill about " \
                f"{self.fill:,.0f} m³."
 
 
@@ -286,14 +286,14 @@ def design_pad(path: str, pts, d: PadDesign, max_cells: int = ms.MAX_CELLS) -> T
     up, dn = touched & (dz > 0), touched & (dz < 0)
     pad_vals = L + off_in
     soil_label = SOILS.get(d.soil, SOILS["custom"])[0]
-    inputs = [("Heights from", ""), ("Finished height", "balanced: dig = fill" if d.level_mode == "balanced"
+    inputs = [("Heights from", ""), ("Finished height", "balanced: cut = fill" if d.level_mode == "balanced"
                                      else f"{L:.2f} m (typed)"),
               ("Finished height at the centre", f"{L:.2f} m"),
               ("Drainage slope", f"{d.slope_pct:g}% toward the {compass_name(flow)}" if d.slope_pct > 0
                else "none (level)"),
               ("Edges", f"sloped sides, {soil_label}: cut {d.cut_ratio:g} : 1, fill {d.fill_ratio:g} : 1 (H : V)"
                if slopes else "straight walls (retaining wall), no side slopes"),
-              ("Soil loosening when dug (swell)", f"{d.swell_pct:g}%"),
+              ("Soil loosening when excavated (swell)", f"{d.swell_pct:g}%"),
               ("Extra soil for packed fill (shrink)", f"{d.shrink_pct:g}%")]
     cut, fill = pc + sc, pf + sf
     return Takeoff("pad", outline, cut, fill, float(up.sum() * ca), float(dn.sum() * ca),

@@ -43,9 +43,10 @@ class TemplatePreview(QWidget):
         from ..core import road as rdm
         W, H = self.width(), self.height()
         half = rd.half
-        ditch = (rd.ditch_d + rd.ditch_w + 1.0) if rd.ditch else 0.0
-        side = 2.0
-        span = 2 * (half + ditch + side)
+        ditch = (rd.ditch_in * rd.ditch_d + rd.ditch_w + 1.0) if rd.ditch else 0.0
+        side = 2.4 + (rd.ditch_in * rd.ditch_d + rd.ditch_w + rd.ditch_out * rd.ditch_d if rd.ditch and rd.ditch_toe
+                      else 0.0)
+        span = 2 * (half + max(ditch, side))
         sx = (W - 30) / span
         vz = 22.0                               # pixels per metre of height (exaggerated)
         cx, cy = W / 2, H * 0.42
@@ -56,24 +57,44 @@ class TemplatePreview(QWidget):
         top = rdm.template(u, 0.0, rd, False)
         pts = [P(-a, b) for a, b in zip(u[::-1], top[::-1])] + [P(a, b) for a, b in zip(u, top)]
         zh = top[-1]
-        # pavement layer
+        # layers: aggregate (subbase and shoulders, tan) and the concrete slab (grey) on top
         if rd.pavement_t > 0:
             bot = rdm.template(u, 0.0, rd, True)
             poly = QPolygonF(pts + [P(a, b) for a, b in zip(u[::-1], bot[::-1])] +
                              [P(-a, b) for a, b in zip(u, bot)])
-            p.setBrush(QColor(120, 128, 142))
             p.setPen(Qt.NoPen)
+            p.setBrush(QColor(150, 128, 92))
             p.drawPolygon(poly)
-        # left side: fill slope down, right side: cut with optional ditch
+            if rd.pccp_t > 0:
+                w2 = rd.width / 2
+                uc = np.linspace(0, w2, 20)
+                tc = rdm.template(uc, 0.0, rd, False)
+                slab = ([P(-a, b) for a, b in zip(uc[::-1], tc[::-1])] + [P(a, b) for a, b in zip(uc, tc)] +
+                        [P(a, b - rd.pccp_t) for a, b in zip(uc[::-1], tc[::-1])] +
+                        [P(-a, b - rd.pccp_t) for a, b in zip(uc, tc)])
+                p.setBrush(QColor(190, 196, 206))
+                p.drawPolygon(QPolygonF(slab))
+        # left side: fill slope down (and a toe ditch), right side: cut with the road side ditch
         p.setPen(QPen(NAVY, 2.5))
-        path = QPainterPath(P(-half - 1.2 * rd.fill_ratio, zh - 1.2))
+        zt = zh - 1.2
+        ut = -half - 1.2 * rd.fill_ratio
+        if rd.ditch and rd.ditch_toe:
+            a1 = ut - rd.ditch_in * rd.ditch_d
+            a2 = a1 - rd.ditch_w
+            path = QPainterPath(P(a2 - rd.ditch_out * rd.ditch_d, zt))
+            path.lineTo(P(a2, zt - rd.ditch_d))
+            path.lineTo(P(a1, zt - rd.ditch_d))
+            path.lineTo(P(ut, zt))
+        else:
+            path = QPainterPath(P(ut, zt))
         path.lineTo(P(-half, zh))
         for q in pts:
             path.lineTo(q)
         if rd.ditch:
-            path.lineTo(P(half + rd.ditch_d, zh - rd.ditch_d))
-            path.lineTo(P(half + rd.ditch_d + rd.ditch_w, zh - rd.ditch_d))
-            path.lineTo(P(half + rd.ditch_d + rd.ditch_w + 1.2 * rd.cut_ratio, zh - rd.ditch_d + 1.2))
+            u1 = half + rd.ditch_in * rd.ditch_d
+            path.lineTo(P(u1, zh - rd.ditch_d))
+            path.lineTo(P(u1 + rd.ditch_w, zh - rd.ditch_d))
+            path.lineTo(P(u1 + rd.ditch_w + 1.2 * rd.cut_ratio, zh - rd.ditch_d + 1.2))
         else:
             path.lineTo(P(half + 1.2 * rd.cut_ratio, zh + 1.2))
         p.setBrush(Qt.NoBrush)
@@ -89,16 +110,18 @@ class TemplatePreview(QWidget):
             p.drawText(QRectF(P(w2, 0).x() + 4, y + 2, 120, 14), Qt.AlignLeft,
                        f"shoulder {rd.shoulder_w:g} m")
         p.setPen(QColor(theme.MUTED))
-        p.drawText(QRectF(4, H - 34, W / 2, 14), Qt.AlignLeft, f"fill side {rd.fill_ratio:g} : 1")
+        p.drawText(QRectF(4, H - 34, W / 2, 14), Qt.AlignLeft,
+                   f"fill side {rd.fill_ratio:g} : 1" + (" + toe ditch" if rd.ditch and rd.ditch_toe else ""))
         p.drawText(QRectF(W / 2, H - 34, W / 2 - 4, 14), Qt.AlignRight,
-                   ("ditch + " if rd.ditch else "") + f"cut side {rd.cut_ratio:g} : 1")
-        p.drawText(QRectF(4, H - 18, W - 8, 14), Qt.AlignCenter,
-                   f"crown {rd.crown_pct:g}%" + (f" · pavement {rd.pavement_t:g} m (grey)" if rd.pavement_t > 0 else "")
-                   + " · heights not to scale")
+                   (f"ditch {rd.ditch_in:g} : 1 + " if rd.ditch else "") + f"cut side {rd.cut_ratio:g} : 1")
+        if rd.pavement_t > 0:
+            p.drawText(QRectF(4, 2, W - 8, 14), Qt.AlignLeft,
+                       f"PCCP {rd.pccp_t * 1000:.0f} mm (grey) on aggregate subbase {rd.subbase_t * 1000:.0f} mm (tan)")
+        p.drawText(QRectF(4, H - 18, W - 8, 14), Qt.AlignCenter, f"crown {rd.crown_pct:g}% · heights not to scale")
 
 
 class SectionView(QWidget):
-    """One cross-section: ground (brown), road and sides (navy), dig / fill shaded."""
+    """One cross-section: ground (brown), road and sides (navy), cut / fill shaded."""
 
     def __init__(self):
         super().__init__()
@@ -217,7 +240,7 @@ class RoadProfileView(QWidget):
         p.setFont(QFont(self.font().family(), 8))
         p.setPen(QColor(theme.INK))
         p.drawText(QRectF(L, 2, W, 16), Qt.AlignLeft,
-                   "Earth balance along the road (m³): above zero = more dug than the fill needs so far")
+                   "Earth balance along the road (m³): above zero = more cut than the fill needs so far")
         p.setPen(QColor(theme.MUTED))
         for v in (lo, 0.0, hi):
             y = P(0, v).y()

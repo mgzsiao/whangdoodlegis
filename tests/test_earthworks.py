@@ -115,7 +115,7 @@ def test_pile_takeoff_and_spot_levels(tmp_path):
     assert "pile" in t.headline()
     rows = ew.grid_points(t, 5.0)
     top = [r for r in rows if abs(r[1] - cx) < 1e-6 and abs(r[2] - cy) < 1e-6]
-    assert top and top[0][5] == pytest.approx(10, abs=0.05)     # 10 m to dig at the centre
+    assert top and top[0][5] == pytest.approx(10, abs=0.05)     # 10 m to cut at the centre
 
 
 def test_typed_points():

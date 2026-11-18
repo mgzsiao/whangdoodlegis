@@ -28,7 +28,7 @@ GROUND_RGB = (138, 106, 58)
 EARTHWORKS_NOTES = (
     "Volumes are estimates from a drone elevation model, for planning and budgeting. Check them against a "
     "ground survey before using them for contracts or payments.",
-    "All volumes are as measured in the ground. Soil loosens when dug (swell) and packed fill needs extra soil "
+    "All volumes are as measured in the ground. Soil loosens when excavated (swell) and packed fill needs extra soil "
     "(shrink); the hauling figures include the factors shown.",
 )
 
@@ -58,10 +58,10 @@ def quantities(t: ew.Takeoff) -> list[tuple[str, str, str]]:
     if t.kind == "pad":
         lvl = (f"{t.level_high:.2f} → {t.level_low:.2f} m" if t.slope_pct > 0 else f"{t.level:.2f} m")
         rows += [("Finished ground", lvl, f"{t.level:.2f} m at the centre"),
-                 ("Dig inside the outline", f"{t.pad_cut:,.1f} m³", ""),
+                 ("Cut inside the outline", f"{t.pad_cut:,.1f} m³", ""),
                  ("Fill inside the outline", f"{t.pad_fill:,.1f} m³", "")]
         if t.side_cut == t.side_cut and (t.side_cut > 0 or t.side_fill > 0):
-            rows += [("Dig on the sloped sides", f"{t.side_cut:,.1f} m³", ""),
+            rows += [("Cut on the sloped sides", f"{t.side_cut:,.1f} m³", ""),
                      ("Fill on the sloped sides", f"{t.side_fill:,.1f} m³", ""),
                      ("Ground worked, sides included", f"{t.works_area:,.1f} m²", "")]
     if t.kind == "pile":
@@ -70,10 +70,10 @@ def quantities(t: ew.Takeoff) -> list[tuple[str, str, str]]:
                  ("BELOW (HOLE) total", f"{t.fill:,.1f} m³", f"over {t.fill_area:,.1f} m², deepest {t.max_fill:.2f} m"),
                  ("Net (above − below)", f"{t.net:,.1f} m³", "")]
     else:
-        rows += [("DIG (CUT) total", f"{t.cut:,.1f} m³", f"over {t.cut_area:,.1f} m², deepest {t.max_cut:.2f} m"),
+        rows += [("CUT total", f"{t.cut:,.1f} m³", f"over {t.cut_area:,.1f} m², deepest {t.max_cut:.2f} m"),
                  ("FILL total", f"{t.fill:,.1f} m³", f"over {t.fill_area:,.1f} m², deepest {t.max_fill:.2f} m"),
-                 ("Net (dig − fill)", f"{t.net:,.1f} m³", ""),
-                 ("Total earth moved (dig + fill)", f"{t.total:,.1f} m³", "")]
+                 ("Net (cut − fill)", f"{t.net:,.1f} m³", ""),
+                 ("Total earth moved (cut + fill)", f"{t.total:,.1f} m³", "")]
     if t.kind == "pad":
         rows.append(("Soil needed for the fill", f"{h.needed:,.1f} m³", f"fill + {h.shrink_pct:g}% for packing"))
     if h.balance >= 0:
@@ -145,7 +145,7 @@ def map_image(t: ew.Takeoff, outline, dem_path: str, ortho_path: str | None, max
     d.text((nx - 6, ny + 30), "N", font=_font(max(14, W // 70), True), fill=INK)
     # legend
     lf = _font(max(13, W // 80))
-    items = [(CUT_RGB, "Dig (cut)"), (FILL_RGB, "Fill"), (AMBER, "Outline")]
+    items = [(CUT_RGB, "Cut"), (FILL_RGB, "Fill"), (AMBER, "Outline")]
     lx, ly = 20, 16
     d.rectangle([lx - 8, ly - 8, lx + 150, ly + 28 * len(items)], fill=(255, 255, 255))
     for i, (col, txt) in enumerate(items):
@@ -271,7 +271,7 @@ def worked_example(t: ew.Takeoff, qty: list) -> list[str]:
     n_c, n_f = int((dz > 0).sum()), int((dz < 0).sum())
     out.append(f"Grid method (used for the totals): the ground worked is split into {dz.size:,} cells of "
                f"{abs(t.transform.a):.2f} \u00d7 {abs(t.transform.e):.2f} m = {cell_a:.4f} m\u00b2. In each cell, "
-               f"depth = ground now \u2212 finished level. Dig = sum of the positive depths \u00d7 cell area = "
+               f"depth = ground now \u2212 finished level. Cut = sum of the positive depths \u00d7 cell area = "
                f"{float(dz[dz > 0].sum()):,.2f} m \u00d7 {cell_a:.4f} m\u00b2 = {float(dz[dz > 0].sum()) * cell_a:,.2f} m\u00b3 "
                f"({n_c:,} cells). Fill = {float(-dz[dz < 0].sum()):,.2f} m \u00d7 {cell_a:.4f} m\u00b2 = "
                f"{float(-dz[dz < 0].sum()) * cell_a:,.2f} m\u00b3 ({n_f:,} cells).")
@@ -329,7 +329,7 @@ def write_xlsx(path: str, title: str, meta: list, q: list, inp: list, spots: lis
     wi.column_dimensions["A"].width = 40
     wi.column_dimensions["B"].width = 70
     wg = wb.create_sheet("Spot levels")
-    cols = ("Point", "Easting (m)", "Northing (m)", "Ground now (m)", "Finished (m)", "Dig + / Fill − (m)")
+    cols = ("Point", "Easting (m)", "Northing (m)", "Ground now (m)", "Finished (m)", "Cut + / Fill − (m)")
     for c, h in enumerate(cols, 1):
         wg.cell(1, c, h).font = head
         wg.cell(1, c).fill = fill
@@ -438,7 +438,7 @@ def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quali
         big = [("Above (pile)", f"{t.cut:,.0f} m³"), ("Below (hole)", f"{t.fill:,.0f} m³"),
                ("Net", f"{t.net:,.0f} m³"), ("Area", f"{t.area.area_2d:,.0f} m²")]
     else:
-        big = [("Dig (cut)", f"{t.cut:,.0f} m³"), ("Fill", f"{t.fill:,.0f} m³"), ("Net", f"{t.net:,.0f} m³"),
+        big = [("Cut", f"{t.cut:,.0f} m³"), ("Fill", f"{t.fill:,.0f} m³"), ("Net", f"{t.net:,.0f} m³"),
                ("Total moved", f"{t.total:,.0f} m³")]
     cells = "".join(f'<td width="25%" align="center" style="background:#E7EDF7; padding:5px;">'
                     f'<span style="color:#5D677A; font-size:8pt;">{html.escape(k.upper())}</span><br>'
@@ -467,7 +467,7 @@ def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quali
         _table(q, header=("Quantity", "Value", "Note"), big=True),
         '<h2 style="font-size:12pt; page-break-before: always;">Map</h2>',
         f'<p align="center"><img src="map.png" width="{int(mw * scale)}" height="{int(mh * scale)}"></p>',
-        '<p style="color:#5D677A; font-size:8pt;">Red = ground to dig away, blue = ground to fill; stronger colour = '
+        '<p style="color:#5D677A; font-size:8pt;">Red = ground to cut away, blue = ground to fill; stronger colour = '
         'deeper. Amber line = the outline.</p>',
         '<h2 style="font-size:12pt; margin-top:10px;">Side view</h2>',
         '<p><img src="section.png" width="520" height="182"></p>',
@@ -486,7 +486,7 @@ def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quali
             if not k:
                 parts.append('<p style="color:#5D677A; font-size:8pt;">Looking along the lot; offsets in metres from '
                              'the middle line, true scale. Brown = ground now, navy = finished ground and sides, red = '
-                             'dig, blue = fill. The box gives each section\'s areas and the volumes since the '
+                             'cut, blue = fill. The box gives each section\'s areas and the volumes since the '
                              'previous section.</p>')
             parts.append(f'<p><img src="sections{k}.png" width="520" height="{int(round(520 * sh / sw))}"></p>')
     if sec and sec.get("worked"):
@@ -578,12 +578,12 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
                                        "level_m": round(t.level, 3) if t.level == t.level else None})]
         cell = t.cell
         works = []
-        for mask, kind in ((t.dz > 0.005, "dig"), (t.dz < -0.005, "fill")):
+        for mask, kind in ((t.dz > 0.005, "cut"), (t.dz < -0.005, "fill")):
             for g, _v in ex.polygons_from_mask(mask, t.transform,
                                                simplify=cell * 1.5, min_area=(cell * 4) ** 2):
                 works.append(ex.Feature(g, {"type": kind, "area_m2": round(g.area, 2)}))
         spot_feats = [ex.Feature(Point(r[1], r[2]), {"point": r[0], "ground_m": r[3], "finished_m": r[4],
-                                                     "dig_fill_m": r[5]}) for r in spots]
+                                                     "cut_fill_m": r[5]}) for r in spots]
         layers = [("outline", out_feats), ("cut_fill_zones", works), ("spot_levels", spot_feats)]
         for fmt in gis_formats:
             extn = ex.VECTOR_FORMATS[fmt][1]
@@ -623,7 +623,7 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
             files.append(write_csv(base + "_quantities_by_section.csv", QTY_HEADER, qty))
         files.append(write_csv(base + "_quantities.csv", ("Quantity", "Value", "Note"), q))
         files.append(write_csv(base + "_spot_levels.csv", ("Point", "Easting_m", "Northing_m", "Ground_m",
-                                                           "Finished_m", "Dig+_Fill-_m"), spots))
+                                                           "Finished_m", "Cut+_Fill-_m"), spots))
         progress(62, "Civil 3D (LandXML) and CAD drawing")
         from . import cad, landxml
         files.append(landxml.surfaces_xml(base + "_civil3d.xml", t, plan.get("name", ""), dem_path))
@@ -642,7 +642,7 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
 
         readme = base + "_README.txt"
         notes = list(EARTHWORKS_NOTES) + [f"Spot levels every {spacing:g} m over the ground worked "
-                                          "(dig + / fill - = ground now minus finished)."]
+                                          "(cut + / fill - = ground now minus finished)."]
         for fmt in gis_formats:
             n = ex.format_note(fmt, dst_crs)
             if n and n not in notes:

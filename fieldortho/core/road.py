@@ -1,9 +1,11 @@
 """Road / path earthworks along a centre line drawn on a drone elevation model.
 
 Stations every 5-20 m along the line (plus the bends and the end). At each station a cross-section is
-built from the user's road shape (carriageway with crown, shoulders, optional ditches in cut, pavement
-thickness) and sloped sides that meet the ground ("daylight"). Cut and fill areas per station give the
-volumes between stations by the average end-area method; a running balance gives the mass haul.
+built from the user's road shape (carriageway with crown, shoulders, PCCP and aggregate subbase layers,
+road side ditches in cut and optionally at the toe of the fill) and sloped sides that meet the ground
+("daylight"). Earthworks stop at the bottom of the subbase (the subgrade). Cut and fill areas per station
+give the volumes between stations by the average end-area method; a running balance gives the mass haul.
+The layers give the PCCP and aggregate (subbase + shoulders + the sloped layer edge on fill) quantities.
 
 Offsets in cross-sections are measured to the right of the centre line looking toward higher stations.
 Bends can be rounded into circular curves (core/alignment.py).
@@ -24,22 +26,26 @@ VERY_TIGHT = 15.0         # m: below this radius a curve is flagged as very tigh
 
 # Road standards the user can choose. Values from DPWH Department Order No. 112, s. 2019 ("Revised Design
 # Standards for Tourism and Farm to Market Roads") as amended by D.O. No. 15, s. 2020 (pavement width of
-# farm-to-market roads with 200 or more vehicles a day). The order gives the concrete (PCCP) thickness only;
-# base course is not specified there, so it is not included.
+# roads with 200 to 400 vehicles a day). The order gives the concrete (PCCP) minimum thickness; the 200 mm
+# aggregate subbase, the 2 : 1 fill slope and the V-shaped road side ditch (2 : 1 road side, 1.5 : 1 outer
+# side, also at the toe of the fill) are from the DPWH typical roadway section (Figure 3). The 0.50 m ditch
+# depth is our suggestion. Labels by traffic (owner's choice, 1.2), not "farm-to-market".
 DPWH_SOURCE = ("DPWH D.O. No. 112, s. 2019 (Revised Design Standards for Tourism and Farm to Market Roads), as "
                "amended by D.O. No. 15, s. 2020")
+SECTION_SOURCE = "DPWH typical roadway section (Figure 3)"
+_DPWH_SHAPE = dict(crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, subbase_t=0.20,
+                   ditch=True, ditch_w=0.0, ditch_d=0.5, ditch_in=2.0, ditch_out=1.5, ditch_toe=True,
+                   cut_ratio=1.5, fill_ratio=2.0, max_grade=12.0)
 STANDARDS = {
-    "fmr_low": dict(label="DPWH farm-to-market road, under 200 vehicles a day",
-                    width=5.0, crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, pavement_t=0.20,
-                    cut_ratio=1.0, fill_ratio=1.5, max_grade=12.0, min_radius=30.0, speed="30 km/h"),
-    "fmr": dict(label="DPWH farm-to-market road, 200 or more vehicles a day",
-                width=6.1, crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, pavement_t=0.20,
-                cut_ratio=1.0, fill_ratio=1.5, max_grade=12.0, min_radius=30.0, speed="30 km/h"),
-    "tourism": dict(label="DPWH tourism road",
-                    width=6.1, crown_pct=1.5, shoulders=True, shoulder_w=1.5, shoulder_pct=3.0, pavement_t=0.23,
-                    cut_ratio=1.0, fill_ratio=1.5, max_grade=12.0, min_radius=50.0,
-                    speed="60 / 40 / 30 km/h (flat / rolling / mountainous)"),
+    "fmr_low": dict(label="Under 200 vehicles a day", width=5.0, pccp_t=0.20, min_radius=30.0, speed="30 km/h",
+                    **_DPWH_SHAPE),
+    "fmr": dict(label="200 to 400 vehicles a day", width=6.1, pccp_t=0.20, min_radius=30.0, speed="30 km/h",
+                **_DPWH_SHAPE),
+    "tourism": dict(label="Tourism road", width=6.1, pccp_t=0.23, min_radius=50.0,
+                    speed="60 / 40 / 30 km/h (flat / rolling / mountainous)", **_DPWH_SHAPE),
 }
+for _s in STANDARDS.values():
+    _s["pavement_t"] = _s["pccp_t"] + _s["subbase_t"]          # total, for older code and the methods page
 STANDARD_NOTES = (
     "Pavement width, concrete thickness (minimum), 1.5 m gravel shoulders, 1.50% cross slope on concrete, 3.0% on "
     "gravel shoulders, minimum curve radius, maximum grade 12% and minimum 0.50% on cut sections, fill slopes no "
@@ -71,13 +77,17 @@ class RoadDesign:
     shoulders: bool = True
     shoulder_w: float = 1.5             # each side
     shoulder_pct: float = 4.0
-    ditch: bool = False                 # in cut only, both sides
-    ditch_w: float = 0.5                # bottom width
+    ditch: bool = False                 # road side ditches in cut, both sides
+    ditch_w: float = 0.0                # bottom width (0 = V-shaped)
     ditch_d: float = 0.5                # depth below the shoulder edge
-    pavement_t: float = 0.0             # pavement + base: earthworks stop this far below the road surface
+    ditch_in: float = 2.0               # road side of the ditch, horizontal : 1 (plans before 1.2: 1 : 1)
+    ditch_out: float = 1.5              # outer side of a ditch at the toe of the fill (in cut: the cut slope)
+    ditch_toe: bool = False             # also a ditch at the toe of the fill
+    pccp_t: float = 0.0                 # concrete (PCCP) thickness
+    subbase_t: float = 0.0              # aggregate subbase under the concrete and the shoulders
     soil: str = "firm"
-    cut_ratio: float = 1.0
-    fill_ratio: float = 1.5
+    cut_ratio: float = 1.5
+    fill_ratio: float = 2.0
     swell_pct: float = ms.DEFAULT_SWELL
     shrink_pct: float = ew.DEFAULT_SHRINK
     truck_m3: float = 0.0
@@ -92,6 +102,11 @@ class RoadDesign:
     @property
     def half(self) -> float:
         return self.width / 2 + (self.shoulder_w if self.shoulders else 0.0)
+
+    @property
+    def pavement_t(self) -> float:
+        """PCCP + subbase: earthworks stop this far below the road surface."""
+        return self.pccp_t + self.subbase_t
 
 
 @dataclass
@@ -112,9 +127,14 @@ class Station:
     cum_fill: float = 0.0
     mass: float = 0.0             # running balance: cut - fill x (1 + shrink)
     kind_note: str = ""
-    left_catch: float = 0.0       # where the sides meet the ground (offset, m)
+    left_catch: float = 0.0       # where the works meet the ground (offset, m; the outer edge of a toe ditch)
     right_catch: float = 0.0
     side_limit: bool = False      # a side slope did not meet the ground within MAX_SIDE
+    pccp_area: float = 0.0        # cross-section areas of the layers (m²)
+    agg_area: float = 0.0         # aggregate: subbase + shoulders + sloped layer edges on fill
+    pccp_vol: float = 0.0         # from the previous station to this one
+    agg_vol: float = 0.0
+    cut_side: tuple = (False, False)          # (left, right) side in cut
     offsets: np.ndarray | None = field(default=None, repr=False)
     ground_xs: np.ndarray | None = field(default=None, repr=False)
     design_xs: np.ndarray | None = field(default=None, repr=False)     # NaN outside the works
@@ -124,7 +144,7 @@ class Station:
         return station_label(self.s)
 
     @property
-    def depth(self) -> float:      # + dig, - fill at the centre line
+    def depth(self) -> float:      # + cut, - fill at the centre line
         return self.ground - self.design
 
     def catch_xy(self, side: int) -> tuple[float, float]:
@@ -158,6 +178,9 @@ class RoadResult:
     pvis: list = field(default_factory=list)                         # PVIs used [[station, elevation, length]]
     vcurves: list = field(default_factory=list)                      # vertical.VCurve
     speed: int = 0                                                   # design speed of the vertical curves
+    pccp_vol: float = 0.0                                            # m³
+    pccp_area: float = 0.0                                           # m² of concrete surface
+    agg_vol: float = 0.0                                             # m³ aggregate subbase incl. shoulders
 
     @property
     def net(self) -> float:
@@ -173,7 +196,7 @@ class RoadResult:
 
     def headline(self) -> str:
         st = self.stations
-        return (f"For the {self.length:,.0f} m road ({st[0].label} to {st[-1].label}, {len(st)} stations), dig about "
+        return (f"For the {self.length:,.0f} m road ({st[0].label} to {st[-1].label}, {len(st)} stations), cut about "
                 f"{self.cut:,.0f} m³ and fill about {self.fill:,.0f} m³. Steepest part {self.steepest:.1f}% near "
                 f"{station_label(self.steepest_at)}.")
 
@@ -317,24 +340,44 @@ def template(u: np.ndarray, zc: float, rd: RoadDesign, earthwork: bool) -> np.nd
     return z
 
 
+def _crossing(u, line, g, hit):
+    """First u where `hit` is true, refined to the exact crossing of line and ground; None if never."""
+    if not hit.any():
+        return None
+    k = int(np.argmax(hit))
+    if k > 0 and np.isfinite(g[k - 1]):
+        a0, a1 = line[k - 1] - g[k - 1], line[k] - g[k]
+        f = a0 / (a0 - a1) if a0 != a1 else 1.0
+        return float(u[k - 1] + f * (u[k] - u[k - 1]))
+    return float(u[k])
+
+
 def side_profile(u: np.ndarray, g: np.ndarray, zc: float, rd: RoadDesign):
-    """Design across one side (u outward from the centre, ground g there). Returns (design, catch u, limited)."""
+    """Design (the bottom of the earthworks) across one side, u outward from the centre, ground g there.
+    Returns (design, catch u, limited, cut): catch = outer edge of the works (of the toe ditch if there is one).
+
+    In cut the side starts at the shoulder edge on the road surface (the layers stand against it) and
+    goes down the road side of the ditch, along its bottom and up the cut slope. On fill the side slope
+    runs down from the shoulder edge; the layers end on it, so the embankment top is the subgrade level
+    out to where the slope passes below it (the sloped layer edge is aggregate, not embankment)."""
     uh = rd.half
     z_h = template(np.array([uh]), zc, rd, False)[0]
+    T = rd.pavement_t
     D = np.full(u.shape, np.nan)
     inside = u <= uh + 1e-9
     D[inside] = template(u[inside], zc, rd, True)
     out = ~inside
     gi = np.interp(uh, u, g) if np.isfinite(g).any() else np.nan
     if not np.isfinite(gi):
-        return D, uh, False
+        return D, uh, False, False
     cut = gi > z_h
     if cut:
         if rd.ditch and rd.ditch_d > 0:
-            u1 = uh + rd.ditch_d                       # inner ditch side 1 : 1
+            u1 = uh + rd.ditch_in * rd.ditch_d             # road side of the ditch, ditch_in : 1
             u2 = u1 + rd.ditch_w
             zb = z_h - rd.ditch_d
-            line = np.where(u <= u1, z_h - (u - uh), np.where(u <= u2, zb, zb + (u - u2) / rd.cut_ratio))
+            line = np.where(u <= u1, z_h - (u - uh) / rd.ditch_in,
+                            np.where(u <= u2, zb, zb + (u - u2) / rd.cut_ratio))
             start = u2
         else:
             line = z_h + (u - uh) / rd.cut_ratio
@@ -343,21 +386,37 @@ def side_profile(u: np.ndarray, g: np.ndarray, zc: float, rd: RoadDesign):
     else:
         line = z_h - (u - uh) / rd.fill_ratio
         hit = out & (line <= g)
-    if hit.any():
-        k = int(np.argmax(hit))
-        # exact crossing between samples k-1 and k
-        if k > 0 and np.isfinite(g[k - 1]):
-            a0, a1 = line[k - 1] - g[k - 1], line[k] - g[k]
-            f = a0 / (a0 - a1) if a0 != a1 else 1.0
-            catch = u[k - 1] + f * (u[k] - u[k - 1])
-        else:
-            catch = u[k]
-        limited = False
-    else:
-        catch, limited = float(u[-1]), True
+    catch = _crossing(u, line, g, hit)
+    limited = catch is None
+    if limited:
+        catch = float(u[-1])
     sel = out & (u <= catch + 1e-9)
-    D[sel] = line[sel]
-    return D, float(catch), limited
+    D[sel] = line[sel] if cut or T <= 0 else np.minimum(line[sel], z_h - T)
+    if not cut and not limited and rd.ditch and rd.ditch_toe and rd.ditch_d > 0:
+        # ditch at the toe of the fill: down ditch_in : 1 from the toe, bottom, up ditch_out : 1 to the ground
+        zt = z_h - (catch - uh) / rd.fill_ratio
+        u1 = catch + rd.ditch_in * rd.ditch_d
+        u2 = u1 + rd.ditch_w
+        zb = zt - rd.ditch_d
+        toe = np.where(u <= u1, zt - (u - catch) / rd.ditch_in,
+                       np.where(u <= u2, zb, zb + (u - u2) / rd.ditch_out))
+        c2 = _crossing(u, toe, g, (u >= u2) & (toe >= g))
+        if c2 is not None:
+            sel2 = (u > catch + 1e-9) & (u <= c2 + 1e-9)
+            D[sel2] = toe[sel2]
+            catch = c2
+    return D, float(catch), limited, bool(cut)
+
+
+def layer_areas(rd: RoadDesign, fill_sides: int) -> tuple[float, float]:
+    """(PCCP, aggregate) cross-section areas in m² for the whole section. Layers are parallel to the
+    surface, so the areas are thickness x width; on each fill side the sloped layer edge adds a triangle of
+    T x (fill_ratio x T) / 2 (the side slope from the shoulder edge to the subgrade)."""
+    pccp = rd.pccp_t * rd.width
+    sh = rd.shoulder_w if rd.shoulders else 0.0
+    T = rd.pavement_t
+    agg = rd.subbase_t * 2 * rd.half + rd.pccp_t * 2 * sh + fill_sides * 0.5 * rd.fill_ratio * T * T
+    return float(pccp), float(agg)
 
 
 def _areas(u, g, D, catch, step_at=None):
@@ -386,19 +445,22 @@ def section(dem: Dem, st: Station, rd: RoadDesign, step: float):
     reach = rd.half + MAX_SIDE
     u = np.union1d(np.arange(0, reach + step / 2, step), [rd.half])      # always a sample at the shoulder edge
     z_edge = template(np.array([rd.half]), st.design, rd, False)[0]
-    step_at = (rd.half, z_edge) if rd.pavement_t > 0 else None
     rx, ry = st.ty, -st.tx                      # right-hand normal
     res = {}
     for side, (nx, ny) in ((1, (rx, ry)), (-1, (-rx, -ry))):
         g = ms.sample(dem, st.x + nx * u, st.y + ny * u)
-        D, catch, lim = side_profile(u, g, st.design, rd)
+        D, catch, lim, cut = side_profile(u, g, st.design, rd)
+        # in cut the layers stand against the side: a vertical step at the shoulder edge, up to the surface
+        step_at = (rd.half, z_edge) if rd.pavement_t > 0 and cut else None
         ca, fa = _areas(u, g, D, catch, step_at)
-        res[side] = (g, D, catch, lim, ca, fa)
-    gl, Dl, cl, ll, cal, fal = res[-1]
-    gr, Dr, cr, lr, car, far = res[1]
+        res[side] = (g, D, catch, lim, ca, fa, cut)
+    gl, Dl, cl, ll, cal, fal, cutl = res[-1]
+    gr, Dr, cr, lr, car, far, cutr = res[1]
     st.cut_area, st.fill_area = cal + car, fal + far
     st.left_catch, st.right_catch = -cl, cr
     st.side_limit = ll or lr
+    st.cut_side = (cutl, cutr)
+    st.pccp_area, st.agg_area = layer_areas(rd, (not cutl) + (not cutr))
     # one array across the whole section, left to right (for drawing and the tables)
     w = max(cl, cr) + max(3.0, 0.25 * max(cl, cr))
     keep = u <= w
@@ -439,14 +501,18 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
         st.ground, st.design = float(g), float(z)
         section(dem, st, rd, step)
     k = 1 + rd.shrink_pct / 100
-    cc = cf = 0.0
+    cc = cf = cp = ca = 0.0
     for i, st in enumerate(stations):
         if i:
             a, L = stations[i - 1], st.s - stations[i - 1].s
             st.cut_vol = (a.cut_area + st.cut_area) / 2 * L
             st.fill_vol = (a.fill_area + st.fill_area) / 2 * L
+            st.pccp_vol = (a.pccp_area + st.pccp_area) / 2 * L
+            st.agg_vol = (a.agg_area + st.agg_area) / 2 * L
         cc += st.cut_vol
         cf += st.fill_vol
+        cp += st.pccp_vol
+        ca += st.agg_vol
         st.cum_cut, st.cum_fill, st.mass = cc, cf, cc - cf * k
     grades = np.diff(sz) / np.maximum(np.diff(sd), 1e-9) * 100
     gi = int(np.argmax(np.abs(grades))) if len(grades) else 0
@@ -460,7 +526,9 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
     if rd.shoulders:
         shape += f"; shoulders {rd.shoulder_w:g} m at {rd.shoulder_pct:g}% each side"
     if rd.ditch:
-        shape += f"; ditches in cut {rd.ditch_w:g} m wide, {rd.ditch_d:g} m deep"
+        kind = "V-shaped" if rd.ditch_w <= 0 else f"{rd.ditch_w:g} m wide at the bottom"
+        shape += (f"; road side ditches {kind}, {rd.ditch_d:g} m deep, road side {rd.ditch_in:g} : 1, in cut"
+                  + (f" and at the toe of the fill (outer side {rd.ditch_out:g} : 1)" if rd.ditch_toe else ""))
     curves = ", ".join(f"R {c.radius:.0f} m" for c in al.curves) if al.curves else "none (sharp bends)"
     if rd.vcurves:
         nv = sum(1 for c in vcs if c.length > 0)
@@ -476,9 +544,10 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
               ("Starting height", (f"ground at the start ({stations[0].design:.2f} m)" if rd.start_mode == "ground"
                                    else f"{rd.start_z:.2f} m (typed)")),
               ("How the road rises and falls", prof), ("Vertical curves", vtxt), ("Road shape", shape),
-              ("Pavement and base thickness", f"{rd.pavement_t:g} m (earthworks stop below it)"),
+              ("Pavement layers", f"PCCP {rd.pccp_t * 1000:.0f} mm on aggregate subbase {rd.subbase_t * 1000:.0f} mm "
+                                  "(earthworks stop below the subbase)" if rd.pavement_t > 0 else "none"),
               ("Side slopes", f"{soil}: cut {rd.cut_ratio:g} : 1, fill {rd.fill_ratio:g} : 1 (out : up)"),
-              ("Soil loosening when dug (swell)", f"{rd.swell_pct:g}%"),
+              ("Soil loosening when excavated (swell)", f"{rd.swell_pct:g}%"),
               ("Extra soil for packed fill (shrink)", f"{rd.shrink_pct:g}%")]
     warn = road_warnings(al, rd, stations, grades, sd) + (vt.warnings(vcs, rd.speed) if rd.vcurves else [])
     return RoadResult(stations, float(sd[-1]), dd, dg, dz, cc, cf,
@@ -487,7 +556,8 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
                       float(np.nanmax(depth)) if np.isfinite(depth).any() else 0.0,
                       float(-np.nanmin(depth)) if np.isfinite(depth).any() else 0.0,
                       sum(s.side_limit for s in stations), int((~np.isfinite(sg)).sum()), dem.crs_wkt, dem.cell,
-                      al, cxy, warn, rd.standard, pvis, vcs, rd.speed if rd.vcurves else 0)
+                      al, cxy, warn, rd.standard, pvis, vcs, rd.speed if rd.vcurves else 0,
+                      pccp_vol=cp, pccp_area=rd.width * float(sd[-1]) if rd.pccp_t > 0 else 0.0, agg_vol=ca)
 
 
 def vertical_pvis(rd: RoadDesign, d: np.ndarray, z: np.ndarray) -> list[list[float]]:
@@ -535,7 +605,7 @@ def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, s
             if st_.depth == st_.depth and st_.depth > 0 and g < 0.5:
                 flat_cut += 1
         if flat_cut:
-            out.append(("Too flat in cut", f"{flat_cut} stretch(es) of the road are dug in and flatter than 0.50%: "
+            out.append(("Too flat in cut", f"{flat_cut} stretch(es) of the road are in cut and flatter than 0.50%: "
                         "water may not drain (DPWH minimum on cut sections)."))
     return out
 
@@ -562,5 +632,14 @@ def design_dict(rd: RoadDesign) -> dict:
 
 
 def design_from(plan: dict) -> RoadDesign:
-    raw = plan.get("road") or {}
+    raw = dict(plan.get("road") or {})
+    # plans saved before 1.2: one pavement thickness, a 1 : 1 road side of the ditch, no toe ditch;
+    # loading them this way keeps their results unchanged
+    if "pccp_t" not in raw and "pavement_t" in raw:
+        raw["pccp_t"], raw["subbase_t"] = raw["pavement_t"], 0.0
+    if raw and "ditch_in" not in raw:
+        raw["ditch_in"] = 1.0
+    for k, old in (("ditch_w", 0.5), ("cut_ratio", 1.0), ("fill_ratio", 1.5)):
+        if raw and k not in raw:
+            raw[k] = old
     return RoadDesign(**{k: v for k, v in raw.items() if k in RoadDesign.__dataclass_fields__})

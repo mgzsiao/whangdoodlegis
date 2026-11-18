@@ -292,7 +292,7 @@ class MeasurePage(Page):
                 ("edge", "The ground around the edge", "Best for piles, mounds and holes: a surface is stretched "
                  "across the outline and everything above it is counted."),
                 ("edge_mean", "A flat level at the average edge height", "For piles on flat ground."),
-                ("level", "A fixed elevation", "To level a lot or pad to a planned height: shows how much to dig "
+                ("level", "A fixed elevation", "To level a lot or pad to a planned height: shows how much to cut "
                  "and how much to fill."),
                 ("lowest", "The lowest ground inside", "Everything above the lowest point."))):
             rb = QRadioButton(text)
@@ -319,14 +319,14 @@ class MeasurePage(Page):
                 vb.addLayout(lr)
         self.ref_group.idClicked.connect(lambda _i: self._ref_changed())
         hr = QHBoxLayout()
-        hr.addWidget(QLabel("Soil loosens when dug by"))
+        hr.addWidget(QLabel("Soil loosens when excavated by"))
         self.swell = QDoubleSpinBox()
         self.swell.setRange(0, 80)
         self.swell.setDecimals(0)
         self.swell.setValue(ms.DEFAULT_SWELL)
         self.swell.setSuffix(" %")
         self.swell.setFixedWidth(90)
-        self.swell.setToolTip("Dug soil takes more space in a truck than in the ground. About 25% for common "
+        self.swell.setToolTip("Excavated soil takes more space in a truck than in the ground. About 25% for common "
                               "earth; 0% if the pile is already loose.")
         self.swell.valueChanged.connect(lambda _v: self._show_result())
         hr.addWidget(self.swell)
@@ -972,7 +972,7 @@ class MeasurePage(Page):
                     self.results.addWidget(IssueBox("warning", "Large height difference between the surveys",
                                                     f"The two maps differ by {r.offset:.1f} m overall. Check that "
                                                     "they show the same place and the same kind of model."))
-            self.results.addWidget(label("Red on the map = ground lower now (dug, eroded, hauled away); blue = "
+            self.results.addWidget(label("Red on the map = ground lower now (excavated, eroded, hauled away); blue = "
                                          "higher now (filled, piled, deposited).", "Hint", wrap=True))
             self._gaps(r.no_data_pct)
         elif kind == "path":
@@ -997,7 +997,7 @@ class MeasurePage(Page):
                      StatCard("Surface area", fmt_area(r.area_3d), "following the slopes"),
                      StatCard("Heights inside", f"{r.z_min:.1f} – {r.z_max:.1f} m", f"average {r.z_mean:.2f} m")]
             if kind == "volume":
-                cards += [StatCard("Dig (cut)", f"{r.cut_m3:,.0f} m³", f"over {fmt_area(r.cut_area)}, "
+                cards += [StatCard("Cut", f"{r.cut_m3:,.0f} m³", f"over {fmt_area(r.cut_area)}, "
                                    f"deepest {r.max_cut:.2f} m"),
                           StatCard("Fill", f"{r.fill_m3:,.0f} m³", f"over {fmt_area(r.fill_area)}, "
                                    f"deepest {r.max_fill:.2f} m"),
@@ -1007,7 +1007,7 @@ class MeasurePage(Page):
                     c.t.setStyleSheet(f"color: {col};")
             self._grid(cards)
             if kind == "volume":
-                self.results.addWidget(label(f"Measured from {r.reference_text}. Red on the map = dig, "
+                self.results.addWidget(label(f"Measured from {r.reference_text}. Red on the map = cut, "
                                              f"blue = fill.", "Hint", wrap=True))
                 self._trucks(r)
                 if self.src_kind.currentData() == "dtm":
