@@ -190,7 +190,7 @@ def _plan(a) -> int:
     print(t.haul.sentence())
     fmts = [f.strip() for f in a.formats.split(",") if f.strip()]
     info = {"project": plan["name"], "location": a.location, "prepared_by": a.prepared_by}
-    if plan["type"] == "road":
+    if plan["type"] in ew.LINEAR:
         for title, text in t.warnings:
             print(f"WARNING {title}: {text}")
         written = rr.export_road(t, plan, dem, files.get("ortho"), out, crs, info, job, fmts)

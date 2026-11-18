@@ -24,7 +24,64 @@ ROAD_NOTES = (
 ) + er.EARTHWORKS_NOTES
 
 
+def is_canal(r) -> bool:
+    return hasattr(r, "q_capacity")
+
+
+def canal_quantities(r) -> list[tuple[str, str, str]]:
+    h = r.haul
+    st = r.stations
+    rows = [("Canal length", f"{r.length:,.1f} m", f"{st[0].label} to {st[-1].label}"),
+            ("Stations", f"{len(st)}", "including bends and the end"),
+            ("Bed slope", f"{r.steepest:g} %", "falls from the first point to the last"),
+            ("Deepest bed below the ground", f"{r.deepest_cut:.2f} m", "at the centre line"),
+            ("Highest bank above the ground", f"{r.highest_fill:.2f} m", "canal top above the ground"),
+            ("CUT total (excavation incl. the channel)", f"{r.cut:,.1f} m³", ""),
+            ("FILL total (earth banks)", f"{r.fill:,.1f} m³", f"{r.bank_len:,.0f} m of canal with a bank"),
+            ("Concrete lining", f"{r.lining_vol:,.1f} m³", f"{r.lining_area:.3f} m² per metre")]
+    rows += list(r.hydraulics)
+    if h.balance >= 0:
+        rows.append(("Extra soil to haul away", f"{h.balance:,.1f} m³", f"{h.loose:,.1f} m³ loose (+{h.swell_pct:g}%)"))
+    else:
+        rows.append(("Soil to bring in", f"{-h.balance:,.1f} m³", f"{h.loose:,.1f} m³ loose (+{h.swell_pct:g}%)"))
+    rows.append(("Truck trips", "  ·  ".join(f"{n:,}" for _s, n in h.trips),
+                 "  ·  ".join(f"{s:g} m³ truck" for s, _n in h.trips)))
+    return rows
+
+
+def canal_section_data(r, cd) -> list[xd.SectionData]:
+    import math as _m
+    out, prev = [], None
+    sq = _m.sqrt(1 + cd.z * cd.z)
+    u_t = cd.top_half + cd.lining_t * sq
+    for s in r.stations:
+        if s.offsets is None:
+            prev = s.s
+            continue
+        dist = 0.0 if prev is None else s.s - prev
+        prev = s.s
+        info = [("Distance from last", f"{dist:.2f} m"),
+                ("Cut area", f"{s.cut_area:.2f} m²"), ("Bank (fill) area", f"{s.fill_area:.2f} m²"),
+                ("Cut volume since last", f"{s.cut_vol:.2f} m³"), ("Fill volume since last", f"{s.fill_vol:.2f} m³"),
+                ("Bed (invert)", f"{s.design:.3f} m"), ("Top of lining", f"{s.design + cd.depth:.3f} m")]
+        if s.ground == s.ground:
+            info.append(("Ground at the centre", f"{s.ground:.3f} m"))
+        slopes = []
+        for sign in (-1, 1):
+            slopes.append((sign * cd.bw / 2, sign * cd.top_half, f"{cd.z:g} : 1"))
+            catch = s.right_catch if sign > 0 else s.left_catch
+            cut = s.cut_side[0 if sign < 0 else 1]
+            start = u_t + cd.berm_w
+            if abs(catch) > start + 0.3:
+                slopes.append((sign * start, catch, xd.ratio_text(cd.cut_ratio if cut else cd.fill_ratio, cut)))
+        out.append(xd.SectionData(f"STA. {s.label}", s.offsets, s.ground_xs, s.design_xs, s.ground, s.design,
+                                  info, slopes))
+    return out
+
+
 def quantities(r: rdm.RoadResult) -> list[tuple[str, str, str]]:
+    if is_canal(r):
+        return canal_quantities(r)
     h = r.haul
     st = r.stations
     rows = [("Road length", f"{r.length:,.1f} m", f"{st[0].label} to {st[-1].label}"),
@@ -480,15 +537,18 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=
 def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map_size, n_sections,
                 curves=(), sheet_sizes=(), worked=()) -> str:
     h = r.haul
+    canal = is_canal(r)
     big = [("Cut", f"{r.cut:,.0f} m³"), ("Fill", f"{r.fill:,.0f} m³"), ("Length", f"{r.length:,.0f} m"),
-           ("Steepest", f"{r.steepest:.1f} %")]
+           ("Bed slope", f"{r.steepest:g} %") if canal else ("Steepest", f"{r.steepest:.1f} %")]
     cells = "".join(f'<td width="25%" align="center" style="background:#E7EDF7; padding:5px;">'
                     f'<span style="color:#5D677A; font-size:8pt;">{html.escape(k.upper())}</span><br>'
                     f'<span style="font-size:15pt; font-weight:600;">{html.escape(v)}</span></td>' for k, v in big)
     H2 = '<h2 style="font-size:12pt; margin-top:8px;">'
-    parts = [f'<p style="color:#5D677A; font-size:8pt; margin:0;">{APP_NAME} · Road earthworks estimate</p>',
+    what = "Canal earthworks and capacity" if canal else "Road earthworks estimate"
+    parts = [f'<p style="color:#5D677A; font-size:8pt; margin:0;">{APP_NAME} · {what}</p>',
              f'<h1 style="font-size:16pt; margin:2px 0 4px 0;">{html.escape(plan.get("name", "Road"))}</h1>',
-             '<p style="font-size:10pt; color:#1F3F77; margin:0 0 8px 0;">Road, path or canal</p>',
+             f'<p style="font-size:10pt; color:#1F3F77; margin:0 0 8px 0;">'
+             f'{"Lined drainage canal" if canal else "Road or path"}</p>',
              er._table(meta, ("30%", "70%")), f"{H2}At a glance</h2>",
              f'<p style="font-size:9pt;">{html.escape(r.headline())}<br>{html.escape(h.sentence())}</p>',
              f'<table width="100%" cellspacing="4" cellpadding="0"><tr>{cells}</tr></table>']
@@ -544,7 +604,7 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
         parts.insert(-1, f'<p style="color:#5D677A; font-size:8pt;">Reference: {html.escape(vt.AASHTO_SOURCE)}.</p>')
     rows = [(x[0], x[4] if x[4] is not None else "-", x[5], x[6] if x[6] is not None else "-", x[7], x[8],
              x[9], x[10], x[13]) for x in station_rows(r)]
-    hdr = ("Station", "Ground m", "Road m", "Cut+/Fill− m", "Cut m²", "Fill m²", "Cut m³", "Fill m³", "Balance m³")
+    hdr = ("Station", "Ground m", "Bed m" if canal else "Road m", "Cut+/Fill− m", "Cut m²", "Fill m²", "Cut m³", "Fill m³", "Balance m³")
     parts.append(er._table(rows, ("12%", "11%", "11%", "12%", "9%", "9%", "11%", "11%", "14%"), header=hdr))
     parts.append('<h2 style="font-size:12pt; page-break-before: always;">Quantities by station</h2>')
     parts.append(er._table(quantity_rows(r), ("18%", "16%", "16%", "16%", "17%", "17%"),
@@ -604,7 +664,9 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     meta = [("Project", info.get("project") or plan.get("name", "")), ("Location", info.get("location") or "-"),
             ("Prepared by", info.get("prepared_by") or "-"), ("Date", datetime.now().strftime("%d %B %Y")),
             ("Coordinates in files", crsmod.label(dst_crs))]
-    title = f"Road earthworks estimate - {plan.get('name', '')}"
+    canal = is_canal(r)
+    title = (f"Canal earthworks and capacity - {plan.get('name', '')}" if canal else
+             f"Road earthworks estimate - {plan.get('name', '')}")
     progress(10, "GIS layers")
     st = r.stations
     centre = [ex.Feature(LineString(pts), {"name": plan.get("name", ""), "length_m": round(r.length, 2),
@@ -640,7 +702,10 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     vrows = vt.rows(r.vcurves, rdm.station_label)
     qrows = quantity_rows(r)
     rd = rdm.design_from(plan)
-    worked = worked_example(r, rd.shrink_pct)
+    if canal:
+        from . import canal as cn
+        cdes = cn.design_from(plan)
+    worked = worked_example(r, cdes.shrink_pct if canal else rd.shrink_pct)
     notes = list(ROAD_NOTES + DISCLAIMER_PARAGRAPHS)
     files.append(write_workbook(base + "_quantities.xlsx", title, meta, q, inp, srows, xrows, notes, crows, vrows,
                                 qrows, worked))
@@ -663,7 +728,7 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     mimg = map_image(r, pts, dem_path, ortho_path)
     pimg = profile_image(r)
     himg = mass_haul_image(r)
-    sheets = sections_sheets(r, rd)
+    sheets = xd.pages(xd.panels(canal_section_data(r, cdes))) if canal else sections_sheets(r, rd)
     mimg.save(base + "_map.png")
     pimg.save(base + "_side_view.png")
     himg.save(base + "_mass_haul.png")

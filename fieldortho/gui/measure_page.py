@@ -652,7 +652,7 @@ class MeasurePage(Page):
 
     # ---------------------------------------------------------------- road
     def road_line_kind(self) -> bool:
-        return self.mode == "plan" and getattr(self, "plan", None) is not None and self.plan.kind == "road"
+        return self.mode == "plan" and getattr(self, "plan", None) is not None and self.plan.kind in ew.LINEAR
 
     def _needs(self, kind):
         return 2 if self.road_line_kind() else NEEDS[kind]

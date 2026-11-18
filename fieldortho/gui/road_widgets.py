@@ -292,7 +292,7 @@ class RoadProfileView(QWidget):
         p.setFont(QFont(self.font().family(), 8))
         p.setPen(QColor(theme.INK))
         p.drawText(QRectF(L, 2, W, 16), Qt.AlignLeft,
-                   "Earth balance along the road (m³): above zero = more cut than the fill needs so far")
+                   "Earth balance along the line (m³): above zero = more cut than the fill needs so far")
         p.setPen(QColor(theme.MUTED))
         for v in (lo, 0.0, hi):
             y = P(0, v).y()
@@ -348,7 +348,7 @@ class RoadProfileView(QWidget):
             return QPointF(L + a / dm * W, T + (z1 - b) / (z1 - z0) * H)
         p.setFont(QFont(self.font().family(), 8))
         p.setPen(QColor(theme.INK))
-        p.drawText(QRectF(L, 2, W, 16), Qt.AlignLeft, "Side view along the road (click to pick a station)")
+        p.drawText(QRectF(L, 2, W, 16), Qt.AlignLeft, f"Side view along the {'canal' if hasattr(self.r, 'q_capacity') else 'road'} (click to pick a station)")
         p.setPen(QColor(theme.MUTED))
         for k in range(3):
             zz = z0 + (z1 - z0) * k / 2

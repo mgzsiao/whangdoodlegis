@@ -450,7 +450,9 @@ def parse_points(text: str, src_code: str, dst_crs_wkt: str, swap: bool = False,
 
 
 # ============================================================================ saved plans
-TYPES = {"pad": "Level a lot or pad", "pile": "Pile, hole or deposit", "road": "Road, path or canal"}
+TYPES = {"pad": "Level a lot or pad", "pile": "Pile, hole or deposit", "road": "Road or path",
+         "canal": "Lined drainage canal"}
+LINEAR = ("road", "canal")          # plans drawn as a line
 
 
 def plans_dir(job_dir: str) -> str:
@@ -477,7 +479,7 @@ def save_plan(job_dir: str, plan: dict) -> str:
 def load_plan(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
         plan = json.load(f)
-    if plan.get("type") not in TYPES or len(plan.get("points") or []) < (2 if plan.get("type") == "road" else 3):
+    if plan.get("type") not in TYPES or len(plan.get("points") or []) < (2 if plan.get("type") in LINEAR else 3):
         raise ValueError("This is not a valid earthworks plan file.")
     return plan
 
@@ -493,6 +495,9 @@ def run_plan(plan: dict, dem_path: str):
     if plan["type"] == "road":
         from . import road
         return road.design_road(dem_path, pts, road.design_from(plan))
+    if plan["type"] == "canal":
+        from . import canal
+        return canal.design_canal(dem_path, pts, canal.design_from(plan))
     if plan["type"] == "pad":
         return design_pad(dem_path, pts, design_from(plan))
     p = plan.get("pile") or {}
@@ -505,6 +510,7 @@ def plan_dict(**kw) -> dict:
     d = dict(kw)
     if isinstance(d.get("design"), PadDesign):
         d["design"] = asdict(d["design"])
-    if d.get("road") is not None and not isinstance(d["road"], dict):
-        d["road"] = asdict(d["road"])
+    for k in ("road", "canal"):
+        if d.get(k) is not None and not isinstance(d[k], dict):
+            d[k] = asdict(d[k])
     return d

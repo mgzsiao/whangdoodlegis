@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDia
 from ..core import activity, alignment as alm, crs as crsmod, earthworks as ew, measure as ms, road as rdm, system
 from ..core import vertical as vt
 from ..core.settings import config_dir
-from . import road_parts as rp, theme
+from . import canal_parts as cp, road_parts as rp, theme
 from .export_widgets import CrsPicker, FolderPicker, FormatChecks
 from .pages_setup import ChoiceCard, clear_layout
 from .road_widgets import SectionView, TemplatePreview
@@ -187,12 +187,13 @@ class PlanPanel(QWidget):
         "pile": ["type", "draw", "ref", "soil", "result"],
         # 1.2: the road shape is asked part by part (guided steps), before the curves that depend on it
         "road": ["type", "draw", "std", *rp.PART_STEPS, "curves", "stations", "rise", "vcurves", "soil", "result"],
+        "canal": ["type", "draw", *cp.PART_STEPS, "stations", "c_flow", "soil", "result"],
     }
     TITLES = {"type": "What are you planning?", "draw": "Draw the area", "height": "How high should the ground be?",
               "edges": "What happens at the edges?", "ref": "Measure from what?", "soil": "Soil and trucks",
               "result": "Results", "stations": "How often should we check the ground?",
               "rise": "How does the road sit on the ground?", "curves": "Curves: smooth the bends",
-              "vcurves": "Smooth the grade changes?", **rp.TITLES}
+              "vcurves": "Smooth the grade changes?", **rp.TITLES, **cp.TITLES}
 
     def __init__(self, page):
         super().__init__()
@@ -235,9 +236,12 @@ class PlanPanel(QWidget):
         self.stack = QStackedWidget()
         self.pages = {}
         self._make_shape_widgets()
+        self._make_canal_widgets()
         for key, fn in (("type", self._p_type), ("draw", self._p_draw), ("height", self._p_height),
                         ("edges", self._p_edges), ("ref", self._p_ref), ("std", self._p_std),
                         *((k, lambda l_, k_=k: self._p_part(k_, l_)) for k in rp.PART_STEPS),
+                        *((k, lambda l_, k_=k: self._p_cpart(k_, l_)) for k in cp.PART_STEPS),
+                        ("c_flow", self._p_cflow),
                         ("curves", self._p_curves), ("stations", self._p_stations),
                         ("rise", self._p_rise), ("vcurves", self._p_vcurves), ("soil", self._p_soil),
                         ("result", self._p_result)):
@@ -289,12 +293,19 @@ class PlanPanel(QWidget):
             c.clicked.connect(self._choose_type)
             lay.addWidget(c)
             self.cards[key] = c
-        c = ChoiceCard("road", "Road, path or canal",
+        c = ChoiceCard("road", "Road or path",
                        "Draw the line it follows. The app checks the ground every 5\u201320 m, sets the road height, "
                        "builds the cross-sections from your road shape and adds up the cut and fill.")
         c.clicked.connect(self._choose_type)
         lay.addWidget(c)
         self.cards["road"] = c
+        c = ChoiceCard("canal", "Lined drainage canal",
+                       "Draw the canal from its upstream end to its downstream end. The app sets a steady downhill "
+                       "bed, builds the lined channel with berms or banks, adds up the cut, fill and concrete, and "
+                       "checks it carries the design flow (from rainfall or a known flow).")
+        c.clicked.connect(self._choose_type)
+        lay.addWidget(c)
+        self.cards["canal"] = c
 
     def _p_draw(self, lay):
         self.draw_text = label("", "", wrap=True)
@@ -1143,13 +1154,359 @@ class PlanPanel(QWidget):
         rd = self.road_design()
         std_key = self.r_std.currentData() or ""
         ref, name = rp.reference(std_key)
+        cd = self.canal_design()
         for k, f in self.part_forms.items():
+            if k in cp.PART_STEPS:
+                f.refresh(cp.START, "suggested")
+                self.part_prev[k].set_design(cd)
+                self.part_src[k].setText(cp.SOURCE)
+                w = cp.warnings(k, cd)
+                self.part_warn[k].setText("\n".join("\u26A0 " + t for t in w))
+                self.part_warn[k].setVisible(bool(w))
+                continue
             f.refresh(ref, name)
             self.part_prev[k].set_design(rd)
             self.part_src[k].setText(rp.source_text(k, std_key))
             w = rp.warnings(k, rd, std_key)
             self.part_warn[k].setText("\n".join("⚠ " + t for t in w))
             self.part_warn[k].setVisible(bool(w))
+
+    # ================================================================ canal (1.2)
+    def _make_canal_widgets(self):
+        self.c_bw = spin(0, 20, 0.5, " m", 2, 0.05, 110)
+        self.c_depth = spin(0.1, 10, 0.8, " m", 2, 0.05, 110)
+        self.c_z = spin(0, 5, 0.5, "  : 1", 2, 0.25, 110)
+        self.c_lin = spin(0, 500, 100, " mm", 0, 10, 110)
+        self.c_n = spin(0.008, 0.06, 0.015, "", 3, 0.001, 110)
+        self.c_fb = spin(0, 3, 0.2, " m", 2, 0.05, 110)
+        self.c_slope = spin(0.01, 20, 0.5, " %", 2, 0.05, 110)
+        self.c_start_ground = QCheckBox("Top of the lining at the ground at the start")
+        self.c_start_ground.setChecked(True)
+        self.c_start_inv = spin(-500, 9000, 0.0, " m", 3, 0.05, 110)
+        self.c_berm = spin(0, 10, 0.5, " m", 2, 0.1, 110)
+        self.c_cut = spin(0.2, 10, 1.5, "  : 1", 1, 0.25, 110)
+        self.c_fill = spin(0.2, 10, 2.0, "  : 1", 1, 0.25, 110)
+        self.canal_rows = {
+            "c_shape": [("Bottom width", self.c_bw, "bw", 1, " m", "0 = a V-shaped channel"),
+                        ("Depth", self.c_depth, "depth", 1, " m", "bed to the top of the lining"),
+                        ("Side slope", self.c_z, "z", 1, " : 1", "out : up (0 = vertical walls)")],
+            "c_lining": [("Lining thickness", self.c_lin, "lining_t", 1000, " mm", "concrete on the bed and sides"),
+                         ("Manning n", self.c_n, "n", 1, "", "roughness of the lining")],
+            "c_fb": [("Freeboard", self.c_fb, "freeboard", 1, " m", "spare height above the highest water")],
+            "c_bed": [("Bed slope", self.c_slope, "slope_pct", 1, "%", "0.5% = 5 cm lower every 10 m"),
+                      ("", self.c_start_ground, "", 1, "", ""),
+                      ("Bed level at the start", self.c_start_inv, "", 1, " m", "when not at the ground")],
+            "c_banks": [("Berm / bank top", self.c_berm, "berm_w", 1, " m", "flat strip beside the lining"),
+                        ("Cut sides", self.c_cut, "cut_ratio", 1, " : 1", "where the ground is higher"),
+                        ("Bank sides", self.c_fill, "fill_ratio", 1, " : 1", "where the ground is lower")],
+        }
+        for w_ in (self.c_bw, self.c_depth, self.c_z, self.c_lin, self.c_n, self.c_fb, self.c_slope,
+                   self.c_start_inv, self.c_berm, self.c_cut, self.c_fill):
+            w_.valueChanged.connect(self._canal_changed)
+        self.c_start_ground.toggled.connect(self._canal_changed)
+        self._cat_task = None
+
+    def _canal_changed(self, *_):
+        self.c_start_inv.setEnabled(not self.c_start_ground.isChecked())
+        if not hasattr(self, "pgroup"):
+            return
+        self._parts_refresh()
+        if self.step() == "c_flow":
+            self._cflow_refresh()
+        self._changed()
+
+    def _p_cpart(self, key, lay):
+        prev = cp.CanalPreview()
+        prev.highlight = key
+        form = rp.PartForm(self.canal_rows[key])
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+        v.addWidget(prev)
+        v.addWidget(label(cp.EXPLAIN[key], "", wrap=True))
+        v.addWidget(form)
+        src = label("", "Hint", wrap=True)
+        v.addWidget(src)
+        warn = label("", "Warn", wrap=True)
+        v.addWidget(warn)
+        lay.addWidget(w)
+        self.part_forms[key], self.part_prev[key], self.part_src[key], self.part_warn[key] = form, prev, src, warn
+
+    def _p_cflow(self, lay):
+        from ..core import canal as cn
+        lay.addWidget(label("First the flow the canal must carry (the design flow), then the app checks the canal "
+                            "carries it (Manning).", "", wrap=True))
+        self.cq_group = QButtonGroup(self)
+        self.cq_rain = radio_block(self.cq_group, "rain", "Work it out from rainfall",
+                                   "Rational Method: Q = C × i × A / 360 (DPWH's c i A / 3.6 with A in km²).", lay)
+        self.cq_flow = radio_block(self.cq_group, "flow", "I know the flow", "From a drainage study, in m³/s.", lay)
+        self.cq_rain.setChecked(True)
+        row = QHBoxLayout()
+        row.setContentsMargins(24, 0, 0, 0)
+        row.addWidget(QLabel("Flow it must carry"))
+        self.c_qd = spin(0.001, 500, 0.6, " m³/s", 3, 0.05, 130)
+        row.addWidget(self.c_qd)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.c_rain_box = QWidget()
+        v = QVBoxLayout(self.c_rain_box)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(label("1  Rainfall", "H2"))
+        g = QGridLayout()
+        self.c_rain_mm = spin(0.1, 2000, 18, " mm", 1, 1, 120)
+        self.c_rain_min = spin(1, 4320, 15, " min", 0, 5, 120)
+        self.c_rp = QComboBox()
+        for r_ in (2, 5, 10, 25, 50, 100):
+            self.c_rp.addItem(f"{r_}-year", r_)
+        self.c_rp.setCurrentIndex(self.c_rp.findData(10))
+        g.addWidget(QLabel("Rainfall amount"), 0, 0)
+        g.addWidget(self.c_rain_mm, 0, 1)
+        g.addWidget(QLabel("Fell over"), 1, 0)
+        g.addWidget(self.c_rain_min, 1, 1)
+        g.addWidget(QLabel("Return period (for the report)"), 2, 0)
+        g.addWidget(self.c_rp, 2, 1)
+        self.c_i_label = label("", "")
+        g.addWidget(self.c_i_label, 3, 0, 1, 2)
+        g.setColumnStretch(2, 1)
+        v.addLayout(g)
+        self.c_rain_why = explain("")
+        v.addWidget(self.c_rain_why)
+        v.addWidget(label("2  Catchment (the land that drains into the canal)", "H2"))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Measured on"))
+        self.c_area_src = QComboBox()
+        self.c_area_src.addItem("the drone map of this job", "map")
+        self.c_area_src.addItem("my own elevation file (e.g. NAMRIA IFSAR)", "own")
+        self.c_area_src.addItem("I'll type it", "typed")
+        self.c_area_src.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.c_area_src.setMinimumContentsLength(14)
+        row.addWidget(self.c_area_src, 1)
+        lay_btn = QPushButton("Measure")
+        lay_btn.setToolTip("Trace the land that drains to the downstream end of the canal.")
+        lay_btn.clicked.connect(self._measure_catchment)
+        self.c_measure_btn = lay_btn
+        row.addWidget(lay_btn)
+        v.addLayout(row)
+        row = QHBoxLayout()
+        self.c_own_btn = QPushButton("Choose the elevation file…")
+        self.c_own_btn.clicked.connect(self._choose_own_dem)
+        self.c_own_label = label("", "Hint", wrap=True)
+        row.addWidget(self.c_own_btn)
+        row.addWidget(self.c_own_label, 1)
+        v.addLayout(row)
+        g = QGridLayout()
+        self.c_area = spin(0, 1e6, 0.0, " ha", 2, 0.5, 120)
+        self.c_flowlen = spin(0, 1e6, 0.0, " m", 0, 10, 120)
+        self.c_drop = spin(0, 5000, 0.0, " m", 1, 0.5, 120)
+        for i, (cap, w_) in enumerate((("Area", self.c_area), ("Longest flow path", self.c_flowlen),
+                                       ("Fall along it", self.c_drop))):
+            g.addWidget(QLabel(cap), i, 0)
+            g.addWidget(w_, i, 1)
+        self.c_tc_method = QComboBox()
+        self.c_tc_method.addItem("Kirpich (small catchments)", "kirpich")
+        self.c_tc_method.addItem("DPWH flood control manual (inlet + flow time)", "dpwh")
+        g.addWidget(QLabel("Time of concentration"), 3, 0)
+        self.c_tc_method.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.c_tc_method.setMinimumContentsLength(14)
+        g.addWidget(self.c_tc_method, 3, 1, 1, 2)
+        self.c_tc_label = label("", "")
+        g.addWidget(self.c_tc_label, 4, 0, 1, 3)
+        g.setColumnStretch(2, 1)
+        v.addLayout(g)
+        self.c_cat_note = label("", "Hint", wrap=True)
+        v.addWidget(self.c_cat_note)
+        v.addWidget(label("3  Land cover (runoff coefficient C)", "H2"))
+        self.c_cov_table = QTableWidget(len(cn.COVERS), 4)
+        self.c_cov_table.setHorizontalHeaderLabels(["Land cover", "Range", "Share %", "C"])
+        self.c_cov_table.verticalHeader().setVisible(False)
+        hh = self.c_cov_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Stretch)
+        for c_ in (1, 2, 3):
+            hh.setSectionResizeMode(c_, QHeaderView.ResizeToContents)
+        self.c_cov = {}
+        start = cn.default_covers()
+        for i, (k, (name, lo, hi, src)) in enumerate(cn.COVERS.items()):
+            it = QTableWidgetItem(name)
+            it.setToolTip(f"{name} ({src})")
+            it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+            self.c_cov_table.setItem(i, 0, it)
+            it = QTableWidgetItem(f"{lo:.2f}" if lo == hi else f"{lo:.2f}–{hi:.2f}")
+            it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+            self.c_cov_table.setItem(i, 1, it)
+            sh = spin(0, 100, start[k][0], "", 0, 5, 70)
+            cc = spin(0, 1, start[k][1], "", 2, 0.05, 70)
+            self.c_cov_table.setCellWidget(i, 2, sh)
+            self.c_cov_table.setCellWidget(i, 3, cc)
+            sh.valueChanged.connect(lambda _v: self._cflow_changed())
+            cc.valueChanged.connect(lambda _v: self._cflow_changed())
+            self.c_cov[k] = (sh, cc)
+        self.c_cov_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.c_cov_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.c_cov_table.setMinimumWidth(0)
+        self.c_cov_table.setTextElideMode(Qt.ElideRight)
+        self.c_cov_table.verticalHeader().setDefaultSectionSize(36)
+        self.c_cov_table.setFixedHeight(38 + 36 * len(cn.COVERS))
+        v.addWidget(self.c_cov_table)
+        self.c_cmix = label("", "", wrap=True)
+        v.addWidget(self.c_cmix)
+        v.addWidget(label(f"C ranges: {cn.RUNOFF_SOURCE}; paved: {cn.PAVED_SOURCE}; paddy: {cn.PADDY_SOURCE}. The "
+                          "starting value is the upper end of each range (the safe side for drainage).", "Hint",
+                          wrap=True))
+        lay.addWidget(self.c_rain_box)
+        self.c_q_label = label("", "", wrap=True)
+        self.c_q_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        lay.addWidget(self.c_q_label)
+        for w_ in (self.c_rain_mm, self.c_rain_min, self.c_qd, self.c_flowlen, self.c_drop):
+            w_.valueChanged.connect(lambda _v: self._cflow_changed())
+        self.c_area.valueChanged.connect(lambda _v: self._cflow_changed())
+        for w_ in (self.c_rp, self.c_tc_method):
+            w_.currentIndexChanged.connect(lambda _i: self._cflow_changed())
+        self.c_area_src.currentIndexChanged.connect(lambda _i: self._cflow_changed())
+        for b in (self.cq_rain, self.cq_flow):
+            b.toggled.connect(lambda on: self._cflow_changed() if on else None)
+        self._own_dem = ""
+
+    def _choose_own_dem(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Elevation file covering the whole catchment", os.path.expanduser("~"),
+                                           "Elevation files (*.tif *.tiff *.img *.asc *.vrt);;All files (*)")
+        if f:
+            self._own_dem = f
+            self.c_area_src.setCurrentIndex(self.c_area_src.findData("own"))
+            self._measure_catchment()
+
+    def _measure_catchment(self):
+        from ..core import canal as cn
+        if not self.page.finished or len(self.page.pts) < 2:
+            return
+        src = self.c_area_src.currentData()
+        if src == "typed":
+            return
+        path = self._own_dem if src == "own" else self.page._dem_path()
+        if not path:
+            self.c_cat_note.setText("Choose your elevation file first.")
+            return
+        line = [tuple(q) for q in self.page.pts]
+        crs_wkt = self.page.view.crs_wkt if self.page.view is not None else ""
+        self.c_cat_note.setText("Tracing the catchment…")
+        self.c_measure_btn.setEnabled(False)
+        cd = self.canal_design()
+        half = cd.top_half + cd.lining_t + cd.berm_w
+        self._cat_task = Task(lambda _t: cn.catchment(path, line, half_width=half, outlet_crs_wkt=crs_wkt), self)
+        self._cat_task.done.connect(self._catchment_done)
+        self._cat_task.failed.connect(self._catchment_failed)
+        self._cat_task.start()
+
+    def _catchment_done(self, cat):
+        self.c_measure_btn.setEnabled(True)
+        for w_, v in ((self.c_area, cat.area_ha), (self.c_flowlen, cat.flow_len), (self.c_drop, cat.drop)):
+            w_.blockSignals(True)
+            w_.setValue(v)
+            w_.blockSignals(False)
+        self.c_cat_note.setText(
+            f"Measured: {cat.area_ha:.2f} ha drain into the canal along its length; the longest flow path "
+            f"(over the land, then along the canal to its end) is {cat.flow_len:,.0f} m, falling {cat.drop:.1f} m."
+            + (" ⚠ The catchment reaches the edge of this elevation model, so the real one may be larger: use "
+               "your own elevation file that covers it (e.g. NAMRIA IFSAR) or type the area." if cat.at_edge else ""))
+        self.c_cat_note.setObjectName("Warn" if cat.at_edge else "Hint")
+        theme.repolish(self.c_cat_note)
+        self._cat_task = None
+        self._cflow_changed()
+
+    def _catchment_failed(self, msg):
+        self.c_measure_btn.setEnabled(True)
+        self._cat_task = None
+        self.c_cat_note.setText(f"⚠ Could not trace the catchment: {msg}. Type the area instead.")
+
+    def _cflow_changed(self):
+        self._cflow_refresh()
+        self._changed()
+
+    def _cflow_refresh(self):
+        from ..core import canal as cn
+        rain = self.cq_rain.isChecked()
+        self.c_rain_box.setVisible(rain)
+        self.c_qd.setEnabled(not rain)
+        src = self.c_area_src.currentData()
+        self.c_own_btn.setVisible(src == "own")
+        self.c_own_label.setVisible(src == "own")
+        self.c_own_label.setText(self._own_dem or "No file chosen yet.")
+        self.c_measure_btn.setVisible(src != "typed")
+        cd = self.canal_design()
+        tc = cn.tc_minutes(cd)
+        i = cn.intensity(cd)
+        self.c_i_label.setText(f"Rainfall intensity i = {cd.rain_mm:g} mm in {cd.rain_min:g} min = <b>{i:.1f} mm/h</b>")
+        self.c_rain_why.setText(
+            "Which rainfall? The heaviest rain over about the time of concentration"
+            + (f" (<b>{tc:.0f} min</b> here)" if tc == tc else "") + ", at your return period, from PAGASA's "
+            "rainfall intensity-duration-frequency (RIDF) table for the nearest station (PAGASA gives these on "
+            "request). Monthly or daily totals, like PAGASA's rainfall maps, are far too spread out for canal design."
+            + (" For a catchment this small use at least 5 min, the shortest duration used in practice (FHWA HEC-22)."
+               if tc == tc and tc < 5 else ""))
+        self.c_tc_label.setText(f"tc = <b>{tc:.1f} min</b>" if tc == tc else "tc: measure or type the catchment first")
+        c, tot = cn.c_mix(cd.covers)
+        self.c_cmix.setText(f"Weighted C = <b>{c:.3f}</b> over {tot:g}% of the catchment"
+                            + ("" if abs(tot - 100) < 0.5 else " ⚠ the shares should add up to 100%"))
+        q = cn.design_q(cd)
+        cap = cn.flow(cd.bw, cd.z, cd.depth - cd.freeboard, cd.n, cd.slope_pct / 100)[0]
+        self.c_q_label.setText(f"Design flow {q:.3f} m³/s · the canal carries {cap:.3f} m³/s "
+                               + ("✔ enough" if cap >= q else "⚠ NOT enough"))
+        self.c_q_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {theme.OK if cap >= q else theme.ERROR};")
+
+    def canal_design(self):
+        from ..core import canal as cn
+        covers = {k: [sh.value(), cc.value()] for k, (sh, cc) in getattr(self, "c_cov", {}).items()}
+        return cn.CanalDesign(
+            interval=self.interval() if hasattr(self, "sgroup") else 10.0, bw=self.c_bw.value(),
+            depth=self.c_depth.value(), z=self.c_z.value(), lining_t=self.c_lin.value() / 1000, n=self.c_n.value(),
+            freeboard=self.c_fb.value(), slope_pct=self.c_slope.value(),
+            start_mode="ground" if self.c_start_ground.isChecked() else "typed",
+            start_invert=self.c_start_inv.value(), berm_w=self.c_berm.value(), cut_ratio=self.c_cut.value(),
+            fill_ratio=self.c_fill.value(),
+            swell_pct=self.swell.value() if hasattr(self, "swell") else 25.0,
+            shrink_pct=self.shrink.value() if hasattr(self, "shrink") else 10.0,
+            truck_m3=self.truck.value() if hasattr(self, "truck") else 0.0,
+            q_mode="rain" if getattr(self, "cq_rain", None) is None or self.cq_rain.isChecked() else "flow",
+            q_design=self.c_qd.value() if hasattr(self, "c_qd") else 0.6,
+            rain_mm=self.c_rain_mm.value() if hasattr(self, "c_rain_mm") else 18.0,
+            rain_min=self.c_rain_min.value() if hasattr(self, "c_rain_min") else 15.0,
+            return_period=int(self.c_rp.currentData()) if hasattr(self, "c_rp") else 10,
+            area_ha=self.c_area.value() if hasattr(self, "c_area") else 0.0,
+            flow_len=self.c_flowlen.value() if hasattr(self, "c_flowlen") else 0.0,
+            drop=self.c_drop.value() if hasattr(self, "c_drop") else 0.0,
+            area_src=self.c_area_src.currentData() if hasattr(self, "c_area_src") else "map",
+            own_dem=getattr(self, "_own_dem", ""),
+            tc_method=self.c_tc_method.currentData() if hasattr(self, "c_tc_method") else "kirpich",
+            covers=covers or cn.default_covers())
+
+    def _load_canal(self, cd):
+        for w_, v in ((self.c_bw, cd.bw), (self.c_depth, cd.depth), (self.c_z, cd.z), (self.c_lin, cd.lining_t * 1000),
+                      (self.c_n, cd.n), (self.c_fb, cd.freeboard), (self.c_slope, cd.slope_pct),
+                      (self.c_berm, cd.berm_w), (self.c_cut, cd.cut_ratio), (self.c_fill, cd.fill_ratio),
+                      (self.c_qd, cd.q_design), (self.c_rain_mm, cd.rain_mm), (self.c_rain_min, cd.rain_min),
+                      (self.c_area, cd.area_ha), (self.c_flowlen, cd.flow_len), (self.c_drop, cd.drop)):
+            w_.blockSignals(True)
+            w_.setValue(v)
+            w_.blockSignals(False)
+        self.c_start_ground.setChecked(cd.start_mode == "ground")
+        if cd.start_invert == cd.start_invert:
+            self.c_start_inv.setValue(cd.start_invert)
+        (self.cq_rain if cd.q_mode == "rain" else self.cq_flow).setChecked(True)
+        self.c_rp.setCurrentIndex(max(0, self.c_rp.findData(int(cd.return_period))))
+        self.c_area_src.setCurrentIndex(max(0, self.c_area_src.findData(cd.area_src)))
+        self.c_tc_method.setCurrentIndex(max(0, self.c_tc_method.findData(cd.tc_method)))
+        self._own_dem = cd.own_dem
+        for k, (sh, cc) in self.c_cov.items():
+            share, c = (cd.covers.get(k) or [0.0, cc.value()])[:2]
+            for w_, v in ((sh, share), (cc, c)):
+                w_.blockSignals(True)
+                w_.setValue(float(v))
+                w_.blockSignals(False)
+        _set_radio(self.sgroup, float(cd.interval), "v")
+        self.swell.setValue(cd.swell_pct)
+        self.shrink.setValue(cd.shrink_pct)
+        self.truck.setValue(cd.truck_m3)
 
     def _std_changed(self, _i):
         k = self.r_std.currentData()
@@ -1337,15 +1694,16 @@ class PlanPanel(QWidget):
         self.step_label.setText(f"{ew.TYPES[self.kind].upper()} · STEP {self.idx + 1} OF {n}")
         self.bar.setRange(0, n)
         self.bar.setValue(self.idx + 1)
-        self.title.setText("Draw the road line" if key == "draw" and self.kind == "road" else self.TITLES[key])
+        self.title.setText(("Draw the road line" if self.kind == "road" else "Draw the canal line")
+                           if key == "draw" and self.kind in ew.LINEAR else self.TITLES[key])
         self.back_btn.setEnabled(self.idx > 0)
         last = self.idx == n - 1
         self.next_btn.setVisible(not last)
         nxt = self.steps()[self.idx + 1] if not last else ""
-        short = {"draw": "Draw the road line" if self.kind == "road" else "Draw the area", "height": "Height",
+        short = {"draw": "Draw the line" if self.kind in ew.LINEAR else "Draw the area", "height": "Height",
                  "edges": "Edges", "ref": "Measure from", "soil": "Soil and trucks", "stations": "Stations",
-                 "rise": "On the ground", "curves": "Curves", "vcurves": "Grade changes", **rp.SHORT}
-        guided = key in rp.PART_STEPS or key == "std"
+                 "rise": "On the ground", "curves": "Curves", "vcurves": "Grade changes", **rp.SHORT, **cp.SHORT}
+        guided = key in rp.PART_STEPS or key == "std" or key in cp.PART_STEPS
         self.next_btn.setText(("See the results" if nxt == "result" else "OK, next" if guided else
                                f"Next: {short.get(nxt, '')}") + "  ›" if nxt else "")
         self.next_btn.setToolTip(f"Next: {short.get(nxt, '')}" if nxt and nxt != "result" else "")
@@ -1360,6 +1718,9 @@ class PlanPanel(QWidget):
             self.draw_text.setText(
                 "Click along the middle of where the road will go, from its start to its end. Double-click (or "
                 "press Enter) on the last point to finish." if self.kind == "road" else
+                "Click along the middle of the canal, from its upstream (high) end to its downstream (low) end: the "
+                "water flows that way. Double-click (or press Enter) on the last point to finish."
+                if self.kind == "canal" else
                 "Click around the area on the map, corner by corner. Double-click (or press Enter) on the last "
                 "corner to close the outline.")
         if key == "curves":
@@ -1374,6 +1735,11 @@ class PlanPanel(QWidget):
         if key == "rise":
             self._start_text()
             self._req_changed()
+        if key == "c_flow":
+            self._cflow_refresh()
+            if (self.c_area_src.currentData() != "typed" and self.c_area.value() == 0 and self.page.finished
+                    and self._cat_task is None):
+                self._measure_catchment()
         if key == "vcurves":
             self._vc_speed_default()
             self._fill_k_table()
@@ -1408,7 +1774,7 @@ class PlanPanel(QWidget):
     def _update_next(self):
         ok = True
         if self.step() == "draw":
-            ok = self.page.finished and len(self.page.pts) >= (2 if self.kind == "road" else 3)
+            ok = self.page.finished and len(self.page.pts) >= (2 if self.kind in ew.LINEAR else 3)
         self.next_btn.setEnabled(ok)
 
     def _done_text(self):
@@ -1416,9 +1782,10 @@ class PlanPanel(QWidget):
         steps = self.steps()[: self.idx]
         if "type" in steps:
             lines.append(f"✔ Plan: {ew.TYPES[self.kind]}")
-        if "draw" in steps and self.page.finished and self.kind == "road":
+        if "draw" in steps and self.page.finished and self.kind in ew.LINEAR:
             from shapely.geometry import LineString
-            lines.append(f"\u2714 Road line: {LineString(self.page.pts).length:,.0f} m")
+            lines.append(f"\u2714 {'Road' if self.kind == 'road' else 'Canal'} line: "
+                         f"{LineString(self.page.pts).length:,.0f} m")
         elif "draw" in steps and self.page.finished:
             from shapely.geometry import Polygon
             lines.append(f"✔ Area: {Polygon(self.page.pts).area:,.0f} m², heights from "
@@ -1465,6 +1832,21 @@ class PlanPanel(QWidget):
                          if self.r_ditch.isChecked() else "\u2714 No road side ditches")
         if "slopes" in steps:
             lines.append(f"\u2714 Sides: cut {self.r_cut.value():g} : 1, fill {self.r_fill.value():g} : 1")
+        if "c_shape" in steps:
+            lines.append(f"\u2714 Canal: bottom {self.c_bw.value():.2f} m, depth {self.c_depth.value():.2f} m, "
+                         f"sides {self.c_z.value():g} : 1")
+        if "c_lining" in steps:
+            lines.append(f"\u2714 Concrete lining {self.c_lin.value():.0f} mm, n {self.c_n.value():.3f}")
+        if "c_fb" in steps:
+            lines.append(f"\u2714 Freeboard {self.c_fb.value():.2f} m")
+        if "c_bed" in steps:
+            lines.append(f"\u2714 Bed falls {self.c_slope.value():g}%")
+        if "c_banks" in steps:
+            lines.append(f"\u2714 Berm {self.c_berm.value():.2f} m, cut {self.c_cut.value():g} : 1, banks "
+                         f"{self.c_fill.value():g} : 1")
+        if "c_flow" in steps:
+            lines.append("\u2714 Design flow: " + (f"{self.c_qd.value():g} m³/s (typed)" if self.cq_flow.isChecked()
+                                                     else "from rainfall"))
         if "soil" in steps:
             lines.append(f"✔ Soil: loosens {self.swell.value():.0f}%"
                          + (f", packing {self.shrink.value():.0f}%" if self.kind != "pile" else ""))
@@ -1476,19 +1858,19 @@ class PlanPanel(QWidget):
         if key not in self.STEPS:
             return
         changed = key != self.kind
-        was_road = self.kind == "road"
+        was_line = self.kind in ew.LINEAR
         self.kind = key
         for k, c in self.cards.items():
             c.set_selected(k == key)
         if key == "pile" and changed and self.page.files.get("dsm"):
             self.src.setCurrentIndex(self.src.findData("dsm"))
-        if key in ("pad", "road") and changed and self.page.files.get("dtm"):
+        if key in ("pad", "road", "canal") and changed and self.page.files.get("dtm"):
             self.src.setCurrentIndex(self.src.findData("dtm"))
         self.swell.setValue(ew.PILE_SWELL if key == "pile" else ms.DEFAULT_SWELL)
         self.takeoff = None
         if changed:
             self.page.clear_overlay()
-            if self.page.pts and (key == "road") != was_road:
+            if self.page.pts and (key in ew.LINEAR) != was_line:
                 self.page._clear()                  # an outline is not a road line (and the other way round)
         self.go(self.idx)
 
@@ -1505,7 +1887,7 @@ class PlanPanel(QWidget):
         if self.kind == "pile" and self.src.currentData() == "dtm":
             self.src_hint.setText("For a stockpile choose the second option: the bare-ground model may have removed "
                                   "the pile.")
-        elif self.kind in ("pad", "road") and self.src.currentData() == "dsm":
+        elif self.kind in ("pad", "road", "canal") and self.src.currentData() == "dsm":
             self.src_hint.setText("Use bare ground, otherwise trees and houses count as soil to cut.")
         else:
             self.src_hint.setText("")
@@ -1557,10 +1939,11 @@ class PlanPanel(QWidget):
         return b.property("key") if b else "gentle"
 
     def _shape_text(self):
-        if self.kind == "road" and self.page.finished and len(self.page.pts) >= 2:
+        if self.kind in ew.LINEAR and self.page.finished and len(self.page.pts) >= 2:
             from shapely.geometry import LineString
             ln = LineString(self.page.pts)
-            self.shape_info.setText(f"\u2714 Road line: {len(self.page.pts)} points, {ln.length:,.1f} m long.")
+            self.shape_info.setText(f"\u2714 {'Road' if self.kind == 'road' else 'Canal'} line: "
+                                    f"{len(self.page.pts)} points, {ln.length:,.1f} m long.")
             return
         if self.page.finished and len(self.page.pts) >= 3:
             from shapely.geometry import Polygon
@@ -1652,10 +2035,14 @@ class PlanPanel(QWidget):
     # ================================================================ compute
     def plan(self) -> dict:
         pts = [list(p) for p in self.page.pts]
-        name = self.name or {"pad": "Lot plan", "pile": "Pile measurement", "road": "Road plan"}[self.kind]
+        name = self.name or {"pad": "Lot plan", "pile": "Pile measurement", "road": "Road plan",
+                             "canal": "Canal plan"}[self.kind]
         if self.kind == "road":
             return ew.plan_dict(type="road", name=name, source=self.src.currentData(), points=pts,
                                 road=self.road_design())
+        if self.kind == "canal":
+            return ew.plan_dict(type="canal", name=name, source=self.src.currentData(), points=pts,
+                                canal=self.canal_design())
         if self.kind == "pad":
             d = ew.PadDesign(level_mode="balanced" if self.rb_bal.isChecked() else "fixed",
                              level=self.level.value(), slope_pct=self.slope.value() if self.slope_cb.isChecked()
@@ -1694,9 +2081,10 @@ class PlanPanel(QWidget):
 
     def _computed(self, t):
         self.takeoff = t
-        if self.kind == "road":
+        if self.kind in ew.LINEAR:
             self.page.show_road(t)
-            self._show_vcurves(t)
+            if self.kind == "road":
+                self._show_vcurves(t)
         else:
             self.page.show_overlay(t)
         self._show()
@@ -1722,7 +2110,7 @@ class PlanPanel(QWidget):
         head = label(t.headline(), "", wrap=True)
         head.setStyleSheet("font-size: 14px;")
         self.res_box.addWidget(head)
-        if self.kind == "road":
+        if self.kind in ew.LINEAR:
             self._show_road(t)
             return
         pile = t.kind == "pile"
@@ -1766,6 +2154,50 @@ class PlanPanel(QWidget):
         self.res_box.addWidget(label("Red on the map = cut, blue = fill.", "Hint"))
 
     def _show_road(self, r):
+        if self.kind == "canal":
+            from ..core import canal as cn
+            ok = r.q_capacity >= r.q_design - 1e-9
+            cards = [StatCard("Cut", f"{r.cut:,.0f} m³", f"bed down to {r.deepest_cut:.2f} m"),
+                     StatCard("Banks (fill)", f"{r.fill:,.0f} m³", f"up to {r.highest_fill:.2f} m high"),
+                     StatCard("Concrete lining", f"{r.lining_vol:,.1f} m³", f"{r.lining_area:.3f} m² per metre"),
+                     StatCard("Length", f"{r.length:,.0f} m", f"{len(r.stations)} stations, bed {r.steepest:g}%"),
+                     StatCard("Carries", f"{cn.q_text(r.q_capacity)} m³/s", "full depth less the freeboard"),
+                     StatCard("Design flow", f"{cn.q_text(r.q_design)} m³/s",
+                              ("enough" if ok else "NOT enough") + (f", water {r.y_design:.2f} m deep"
+                                                                     if r.y_design == r.y_design else ""))]
+            cards[0].t.setStyleSheet(f"color: {theme.CUT_TEXT};")
+            cards[1].t.setStyleSheet(f"color: {theme.FILL_TEXT};")
+            cards[5].t.setStyleSheet(f"color: {theme.OK if ok else theme.ERROR};")
+            g = QGridLayout()
+            g.setSpacing(8)
+            for i, c in enumerate(cards):
+                g.addWidget(c, i // 2, i % 2)
+            self.res_box.addLayout(g)
+            for a_, b_, c_ in r.hydraulics:
+                self.res_box.addWidget(label(f"<b>{a_}:</b> {b_}" + (f" \u2013 {c_}" if c_ else ""), "", wrap=True))
+            box = QWidget()
+            box.setObjectName("Trucks")
+            box.setStyleSheet(f"QWidget#Trucks {{ background: {theme.INFO_SOFT}; border-radius: 8px; }}"
+                              "QLabel { background: transparent; }")
+            v = QVBoxLayout(box)
+            v.setContentsMargins(12, 10, 12, 10)
+            v.addWidget(label("Hauling", "H2"))
+            v.addWidget(label(r.haul.sentence(), "", wrap=True))
+            self.res_box.addWidget(box)
+            for title, text in r.warnings:
+                self.res_box.addWidget(IssueBox("warning", title, text))
+            if r.no_data:
+                self.res_box.addWidget(IssueBox("warning", "Off the map",
+                                                f"{r.no_data} station(s) are outside the map or in a gap."))
+            self.res_box.addWidget(label("On the map the strip shows the ground worked: red = mostly cut, blue = "
+                                         "mostly bank fill. The side view shows the ground and the canal bed.",
+                                         "Hint", wrap=True))
+            self.road_box.setVisible(True)
+            self.st_slider.blockSignals(True)
+            self.st_slider.setRange(0, len(r.stations) - 1)
+            self.st_slider.blockSignals(False)
+            self.select_station(min(self.st_slider.value(), len(r.stations) - 1))
+            return
         cards = [StatCard("Cut", f"{r.cut:,.0f} m³", f"deepest {r.deepest_cut:.2f} m at the centre"),
                  StatCard("Fill", f"{r.fill:,.0f} m³", f"highest {r.highest_fill:.2f} m at the centre"),
                  StatCard("Net", f"{r.net:,.0f} m³", "cut \u2212 fill"),
@@ -1819,7 +2251,7 @@ class PlanPanel(QWidget):
 
     def select_station(self, i):
         r = self.takeoff
-        if self.kind != "road" or r is None or not (0 <= i < len(r.stations)):
+        if self.kind not in ew.LINEAR or r is None or not (0 <= i < len(r.stations)):
             return
         if self.st_slider.value() != i:
             self.st_slider.blockSignals(True)
@@ -1827,9 +2259,14 @@ class PlanPanel(QWidget):
             self.st_slider.blockSignals(False)
         st = r.stations[i]
         self.st_label.setText(st.label)
-        self.st_info.setText(f"Ground {st.ground:.2f} m, road {st.design:.2f} m ("
-                             + (f"cut {st.depth:.2f} m" if st.depth >= 0 else f"fill {-st.depth:.2f} m")
-                             + f" at the centre). Cut {st.cut_area:.2f} m², fill {st.fill_area:.2f} m².")
+        if self.kind == "canal":
+            self.st_info.setText(f"Ground {st.ground:.2f} m, bed {st.design:.2f} m, top of lining "
+                                 f"{st.design + self.c_depth.value():.2f} m. Cut {st.cut_area:.2f} m², banks "
+                                 f"{st.fill_area:.2f} m².")
+        else:
+            self.st_info.setText(f"Ground {st.ground:.2f} m, road {st.design:.2f} m ("
+                                 + (f"cut {st.depth:.2f} m" if st.depth >= 0 else f"fill {-st.depth:.2f} m")
+                                 + f" at the centre). Cut {st.cut_area:.2f} m², fill {st.fill_area:.2f} m².")
         self.sec_view.set_station(st)
         self.page.select_station(i)
 
@@ -1845,7 +2282,7 @@ class PlanPanel(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Cannot read the file", str(e))
             return
-        need = 2 if self.kind == "road" else 3
+        need = 2 if self.kind in ew.LINEAR else 3
         shapes = [s for s in shapes if len(s["points"]) >= need]
         if not shapes:
             QMessageBox.information(self, "Nothing found", f"The file has no line or area with {need} or more points.")
@@ -1873,7 +2310,7 @@ class PlanPanel(QWidget):
         d.dst_wkt = self.page.view.crs_wkt
         if d.exec():
             self._set_points(d.points)
-            if self.kind != "road" and len(d.points) < 3:
+            if self.kind not in ew.LINEAR and len(d.points) < 3:
                 self.page._clear()
 
     def _lonlat(self):
@@ -1904,7 +2341,8 @@ class PlanPanel(QWidget):
 
     # ================================================================ save / export / load
     def _ask_name(self) -> bool:
-        default = self.name or {"pad": "Lot plan", "pile": "Pile measurement", "road": "Road plan"}[self.kind]
+        default = self.name or {"pad": "Lot plan", "pile": "Pile measurement", "road": "Road plan",
+                                "canal": "Canal plan"}[self.kind]
         name, ok = QInputDialog.getText(self, "Name of the plan", "Name:", text=default)
         if not ok or not name.strip():
             return False
@@ -1929,7 +2367,7 @@ class PlanPanel(QWidget):
         t = self.takeoff
         activity.record(activity.Activity(kind="earthworks", name=self.name, path=self.plan_path,
                                           folder=folder or os.path.dirname(self.plan_path),
-                                          size=(f"{t.length:,.0f} m road" if self.kind == "road"
+                                          size=(f"{t.length:,.0f} m {self.kind}" if self.kind in ew.LINEAR
                                                 else f"{t.area.area_2d:,.0f} m²"), crs="",
                                           status=f"{status} · cut {t.cut:,.0f} / fill {t.fill:,.0f} m³"))
 
@@ -1944,7 +2382,7 @@ class PlanPanel(QWidget):
         epsg = rasterio_epsg(self.page._dem_path())
         folder = os.path.join(ew.plans_dir(job.job_dir), ew.safe(self.name))
         d = ExportDialog(self.name, f"EPSG:{epsg}" if epsg else "EPSG:4326", self._lonlat(), folder, self,
-                         road=self.kind == "road")
+                         road=self.kind in ew.LINEAR)
         if not d.exec():
             return
         t, plan = self.takeoff, self.plan()
@@ -1958,7 +2396,7 @@ class PlanPanel(QWidget):
         dlg.setMinimumDuration(0)
         dlg.setWindowModality(Qt.WindowModal)
         result = {}
-        road = self.kind == "road"
+        road = self.kind in ew.LINEAR
 
         def work(tk):           # stores its own result: queued signals may not be delivered before wait()
             try:
@@ -2079,6 +2517,9 @@ class PlanPanel(QWidget):
             self.src.setCurrentIndex(self.src.findData(plan["source"]))
         if plan["type"] == "road":
             self._load_road(rdm.design_from(plan))
+        elif plan["type"] == "canal":
+            from ..core import canal as cn
+            self._load_canal(cn.design_from(plan))
         elif plan["type"] == "pad":
             d = ew.design_from(plan)
             (self.rb_bal if d.level_mode == "balanced" else self.rb_fix).setChecked(True)

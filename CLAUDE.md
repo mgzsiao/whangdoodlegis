@@ -208,8 +208,20 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     for template / side_profile; PCCP and aggregate areas include the widening. `core/pavement.py`: AASHTO 1993
     rigid equation solved for D (Guide example 9.72 in), `RoadDesign.aashto` (empty = not checked), GUI box on the
     pavement layers step. Design speed now chosen on the standard step (used by curves and vertical curves).
-  - F canal model + design flow
-    by the Rational Method (show the owner the runoff-coefficient table and its source first); G new report
+  - F done: lined drainage canal as its own plan type "canal" (`ew.LINEAR = ("road", "canal")`). `core/canal.py`:
+    trapezoid b / d / z, concrete lining t (area t(b + 2d√(1+z²)) + t²(2√(1+z²) − z)), freeboard, bed falling S from the
+    first point (top of lining at the ground there, or typed bed level), berm + cut slope or earth bank + fill slope;
+    5 cm cross-section steps, end-area volumes, `CanalResult(RoadResult)`. Manning capacity at depth − freeboard,
+    normal depth at the design flow, velocity checks 0.6 / 3.0 m/s. Design flow typed or Rational Q = C i A / 360
+    (i = typed mm over typed minutes; PAGASA RIDF note); C list `COVERS` = DPWH Red Book + TxDOT paved + paddy, starting
+    at the upper end (owner approved); tc Kirpich (default) or DPWH-JICA ti + L/V (Kraven). `catchment(path, line,
+    half_width)`: priority-flood D8, every cell draining into the canal strip (canal top + berms, >= 1 cell) along the
+    whole line; longest path = over land + along the canal; `at_edge` warns (use own DEM, e.g. IFSAR, or type it).
+    GUI: `gui/canal_parts.py` (steps c_shape, c_lining, c_fb, c_bed, c_banks with CanalPreview, marks "suggested"),
+    flow step c_flow in plan_panel (`_p_cflow`, land cover table, Measure catchment Task). Old PDF report has a
+    canal branch (stage G replaces it). Methods page "Lined drainage canal". Tests `tests/test_canal.py`; walkthrough
+    `tests/gui_walkthrough8.py` (synthetic site).
+  - G new report
     (B + C style, ReportLab, plan + profile sheet, two-column cross-sections, A4/A3 + long bond, quantities only,
     editable signatories); H tests, methods pages, 1.2.0 installers.
 - The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.

@@ -5,7 +5,7 @@ every number quoted here is the one the code uses.
 """
 from __future__ import annotations
 
-from . import road as rdm, vertical as vt
+from . import canal as cn, road as rdm, vertical as vt
 from .crs import LUZON_TOWGS84
 
 F = '<p style="margin:6px 0 6px 18px; font-family: Consolas, monospace; background:#F3F5F9; padding:6px;">'
@@ -44,6 +44,15 @@ def _std_table() -> str:
             f"<th>Min. radius</th><th>Max. grade</th></tr>{rows}</table>"
             f"<p>Width, PCCP, shoulders, cross slope, radius and grade: {rdm.DPWH_SOURCE}. Subbase, fill slope and the "
             f"V-shaped road side ditch (2 : 1 road side, 1.5 : 1 outer side): {rdm.SECTION_SOURCE}.</p>")
+
+
+def _cover_table() -> str:
+    rows = "".join(f"<tr><td>{name}</td><td>{lo:.2f}" + ("" if lo == hi else f" – {hi:.2f}") + f"</td><td>{hi:.2f}</td>"
+                   f"<td>{src.split(',')[0] if src != cn.RUNOFF_SOURCE else 'DPWH (MPWH 1987)'}</td></tr>"
+                   for name, lo, hi, src in cn.COVERS.values())
+    return ('<table cellpadding="4" cellspacing="0" border="1" style="border-collapse:collapse;">'
+            "<tr><th>Land cover</th><th>C range</th><th>Starting C</th><th>Source</th></tr>"
+            f"{rows}</table>")
 
 
 def topics() -> list[tuple[str, str, str]]:
@@ -182,7 +191,7 @@ def topics() -> list[tuple[str, str, str]]:
                  "The report adds cross-sections across the lot with end-area volumes between them as a check "
                  "you can follow by hand; they agree with the grid totals within a few percent."),
         ])),
-        ("road", "Earthworks: road, path or canal", "".join([
+        ("road", "Earthworks: road or path", "".join([
             _sec("Stations", "Stations every 5, 10, 15 or 20 m along the centre line, plus every bend, curve "
                  "start and end, and the end of the road. Named k+mmm (0+120 = 120 m from the start)."),
             _sec("Horizontal curves", "At a bend of angle Δ the road follows a circular arc of radius R:",
@@ -258,6 +267,63 @@ def topics() -> list[tuple[str, str, str]]:
             _sec("Files for Civil 3D and CAD", "LandXML 1.2: ground surface (TIN), alignment with lines and "
                  "curves, the profile (PVIs with ParaCurve vertical curves) and cross-sections. DXF: plan, profile "
                  "(heights ×10) and cross-section sheets."),
+        ])),
+        ("canal", "Lined drainage canal", "".join([
+            _sec("The canal", "A trapezoid lined with concrete: bottom width b, depth d (bed to the top of the "
+                 "lining), side slope z : 1 (horizontal : vertical) and lining thickness t. The starting values "
+                 "(0.50 m bottom, 0.80 m deep, 0.5 : 1 sides, 100 mm concrete, 0.20 m freeboard, 0.5% bed) are "
+                 "suggested sizes for a barangay drainage canal, not a DPWH standard; every value can be changed."),
+            _sec("Bed level", "The bed falls by the same amount every metre from the first point drawn (upstream) to "
+                 "the last (downstream), so the water always flows:",
+                 _f("bed(s) = bed(0) − S × s,   bed(0) = ground at the start − d  (or typed)"),
+                 "Where the ground drops faster than the bed, the canal comes out of the ground and gets earth "
+                 "banks; where the ground rises, the cut gets deeper. Drawing the line uphill is warned about."),
+            _sec("Cross-sections and quantities", "At each station: the excavation for the channel and its lining; "
+                 "at the top of the lining a berm, then a cut slope up to the ground (ground higher) or the top of an "
+                 "earth bank with fill slopes down to the ground (ground lower). Cut and fill areas are added across "
+                 "the section in 5 cm steps; volumes between stations by the average end-area method, as for roads:",
+                 _f("V = (A1 + A2) / 2 × L"),
+                 "Concrete lining per metre (bed and both sides, measured square to the lining):",
+                 _f("A(lining) = t × (b + 2 d √(1 + z²)) + t² × (2 √(1 + z²) − z)",
+                    "concrete = A(lining) × canal length")),
+            _sec("How much it carries (Manning)", "Uniform flow in the lined channel:",
+                 _f("Q = A × R^(2/3) × S^(1/2) / n",
+                    "A = (b + z y) y,   P = b + 2 y √(1 + z²),   R = A / P"),
+                 "The capacity is Q with the water up to the depth less the freeboard. The water depth at the design "
+                 "flow is found by solving Manning for y (bisection). n = 0.015 is Chow's value for float-finished "
+                 "concrete (trowel 0.013, unfinished 0.017; V. T. Chow, Open-Channel Hydraulics, 1959, Table 5-6). "
+                 f"Velocities below {cn.V_MIN} m/s are warned about (silt settles), above {cn.V_MAX} m/s too "
+                 "(wear of the lining, scour at the outlet)."),
+            _sec("Design flow (Rational Method)", "For small catchments:",
+                 _f("Q = C × i × A / 360   (Q m³/s, i mm/h, A hectares)",
+                    "  = c × i × A / 3.6   (DPWH form, A in km²)",
+                    "i = rainfall amount (mm) / duration (h)"),
+                 "Which rainfall: the heaviest rain over a duration of about the time of concentration, at the "
+                 "chosen return period, from PAGASA's rainfall intensity-duration-frequency (RIDF) table for the "
+                 "nearest synoptic station. Daily or monthly totals are too spread out for canal design. For very "
+                 "small catchments 5 min is the shortest duration used (FHWA HEC-22)."),
+            _sec("Runoff coefficient C", "The share of the rain that runs off. Pick the land covers of the "
+                 "catchment and their shares; C is the area-weighted average:",
+                 _f("C = Σ (share × C) / Σ share"),
+                 _cover_table(),
+                 f"<p>Ranges: {cn.RUNOFF_SOURCE}; paved surfaces and roofs: {cn.PAVED_SOURCE}; paddy: "
+                 f"{cn.PADDY_SOURCE}. The starting value is the upper end of each range (the safe side for "
+                 "drainage); type your own within the range.</p>"),
+            _sec("Time of concentration", "The time the water takes from the farthest point of the catchment to "
+                 "the end of the canal. Kirpich (1940), for small catchments (the default):",
+                 _f("tc = 0.0195 × L^0.77 × S^−0.385   (minutes; L m, S = fall / L)"),
+                 "or the DPWH-JICA Manual on Flood Control Planning (2003): inlet time plus flow time with Kraven's "
+                 "velocity:",
+                 _f("tc = ti + L / V,   ti = 30 √(A / 2) min  (A km², at most 2 km²)",
+                    "V = 3.5 m/s (slope above 1/100), 3.0 m/s (1/100 – 1/200), 2.1 m/s (below 1/200)")),
+            _sec("Catchment from the elevation model", "The land that drains into the canal anywhere along its "
+                 "length. On the drone map's elevation model (or your own file, e.g. NAMRIA IFSAR, when the drone "
+                 "map does not cover the catchment): depressions are filled (priority flood) and every cell drains to "
+                 "its lowest neighbour (8 directions). Every cell whose water reaches the canal strip (the canal top "
+                 "and berms each side of the line, at least one cell) belongs to the catchment. The longest flow path "
+                 "runs over the land to the canal, then along the canal to its end; its fall is the height "
+                 "difference between its two ends. When the catchment touches the edge of the elevation model the "
+                 "real one may be larger: the app warns, and you can use a larger elevation file or type the area."),
         ])),
         ("pile", "Piles, holes and deposits", "".join([
             _sec("Method", "As the Measure volume tool: every cell inside the outline is compared with the reference "
