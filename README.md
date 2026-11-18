@@ -236,4 +236,4 @@ from the use or sharing of its results.
 
 ## Licensing
 
-OpenDroneMap is AGPL-3.0. WhangDoodleGIS runs it as a separate program and does not link to it. If you distribute the installer with ODM bundled, include ODM's license and point to its source (github.com/OpenDroneMap/ODM). Get legal advice before selling a closed-source product that bundles it. The other dependencies are permissive or LGPL (PySide6/Qt LGPL; rasterio/GDAL, pyogrio, pyproj, numpy, scipy, shapely, Pillow, contourpy, pyshp under BSD/MIT-style licences).
+OpenDroneMap is AGPL-3.0. WhangDoodleGIS runs it as a separate program and does not link to it. If you distribute the installer with ODM bundled, include ODM's license and point to its source (github.com/OpenDroneMap/ODM). Get legal advice before selling a closed-source product that bundles it. The other dependencies are permissive or LGPL (PySide6/Qt LGPL; rasterio/GDAL, pyogrio, pyproj, numpy, scipy, shapely, Pillow, contourpy, pyshp, openpyxl, ReportLab under BSD/MIT-style licences). The report fonts (Manrope, IBM Plex Sans / Mono) are under the SIL Open Font License 1.1; their licence texts are in `fieldortho/resources/fonts`.

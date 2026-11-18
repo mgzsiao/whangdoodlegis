@@ -29,8 +29,10 @@ Third-party software included or installed
   without internet get the same results. Source code: https://github.com/uav4geo/OpenPointClass
 - Qt / PySide6 - GNU LGPL v3 (https://www.qt.io, https://wiki.qt.io/Qt_for_Python).
 - GDAL / PROJ (via rasterio and pyogrio) - MIT / X11 style licences.
-- rasterio, pyogrio, shapely, pyproj, numpy, scipy, Pillow, contourpy, pyshp, openpyxl -
+- rasterio, pyogrio, shapely, pyproj, numpy, scipy, Pillow, contourpy, pyshp, openpyxl, ReportLab -
   BSD / MIT / HPND style licences.
+- Report fonts Manrope (The Manrope Project Authors) and IBM Plex Sans / IBM Plex Mono (IBM Corp.,
+  Reserved Font Name "Plex") - SIL Open Font License 1.1; licence texts in fieldorthoesourcesonts.
 - EGM96 geoid grid (us_nga_egm96_15.tif) from the PROJ-data project - public domain (US NGA).
 - Icons: Segoe Fluent Icons / Segoe MDL2 Assets, part of Windows (not redistributed).
 

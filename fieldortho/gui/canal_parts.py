@@ -7,11 +7,11 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ..core.canal import SUGGESTED
 from . import theme
 
 PART_STEPS = ("c_shape", "c_lining", "c_fb", "c_bed", "c_banks")
-START = dict(bw=0.5, depth=0.8, z=0.5, lining_t=0.10, n=0.015, freeboard=0.20, slope_pct=0.5, berm_w=0.5,
-             cut_ratio=1.5, fill_ratio=2.0)
+START = SUGGESTED
 SOURCE = "Suggested starting values (agreed 18 November 2026), not a DPWH standard."
 
 TITLES = {"c_shape": "Canal shape", "c_lining": "Concrete lining", "c_fb": "Freeboard", "c_bed": "Bed slope",

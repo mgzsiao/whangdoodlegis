@@ -1,7 +1,6 @@
 """Road plan -> PDF report, Excel workbook, CSVs and GIS layers (one folder, for engineers)."""
 from __future__ import annotations
 
-import html
 import json
 import math
 import os
@@ -48,35 +47,6 @@ def canal_quantities(r) -> list[tuple[str, str, str]]:
                  "  ·  ".join(f"{s:g} m³ truck" for s, _n in h.trips)))
     return rows
 
-
-def canal_section_data(r, cd) -> list[xd.SectionData]:
-    import math as _m
-    out, prev = [], None
-    sq = _m.sqrt(1 + cd.z * cd.z)
-    u_t = cd.top_half + cd.lining_t * sq
-    for s in r.stations:
-        if s.offsets is None:
-            prev = s.s
-            continue
-        dist = 0.0 if prev is None else s.s - prev
-        prev = s.s
-        info = [("Distance from last", f"{dist:.2f} m"),
-                ("Cut area", f"{s.cut_area:.2f} m²"), ("Bank (fill) area", f"{s.fill_area:.2f} m²"),
-                ("Cut volume since last", f"{s.cut_vol:.2f} m³"), ("Fill volume since last", f"{s.fill_vol:.2f} m³"),
-                ("Bed (invert)", f"{s.design:.3f} m"), ("Top of lining", f"{s.design + cd.depth:.3f} m")]
-        if s.ground == s.ground:
-            info.append(("Ground at the centre", f"{s.ground:.3f} m"))
-        slopes = []
-        for sign in (-1, 1):
-            slopes.append((sign * cd.bw / 2, sign * cd.top_half, f"{cd.z:g} : 1"))
-            catch = s.right_catch if sign > 0 else s.left_catch
-            cut = s.cut_side[0 if sign < 0 else 1]
-            start = u_t + cd.berm_w
-            if abs(catch) > start + 0.3:
-                slopes.append((sign * start, catch, xd.ratio_text(cd.cut_ratio if cut else cd.fill_ratio, cut)))
-        out.append(xd.SectionData(f"STA. {s.label}", s.offsets, s.ground_xs, s.design_xs, s.ground, s.design,
-                                  info, slopes))
-    return out
 
 
 def quantities(r: rdm.RoadResult) -> list[tuple[str, str, str]]:
@@ -400,9 +370,6 @@ def section_data(r: rdm.RoadResult, rd: rdm.RoadDesign | None = None) -> list[xd
     return out
 
 
-def sections_sheets(r: rdm.RoadResult, rd: rdm.RoadDesign | None = None) -> list[Image.Image]:
-    return xd.pages(xd.panels(section_data(r, rd)))
-
 
 def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max_px: int = 1800) -> Image.Image:
     from .model_export import background_for
@@ -447,10 +414,11 @@ def map_image(r: rdm.RoadResult, pts, dem_path: str, ortho_path: str | None, max
         if i in shown:
             lx, ly = X, Y
             d.ellipse([X - 5, Y - 5, X + 5, Y + 5], fill=(255, 255, 255), outline=INK, width=2)
-            tw = d.textlength(s.label, font=f)
+            lbl = "K" + s.label
+            tw = d.textlength(lbl, font=f)
             th = f.size + 6
             d.rectangle([lx + 8, ly - th - 2, lx + 16 + tw, ly - 2], fill=INK)
-            d.text((lx + 12, ly - th - 1), s.label, font=f, fill=(255, 255, 255))
+            d.text((lx + 12, ly - th - 1), lbl, font=f, fill=(255, 255, 255))
     metres_per_px = gt.a / scale
     nice = ms_nice(W * 0.2 * metres_per_px)
     bar = nice / metres_per_px
@@ -534,118 +502,6 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=
     return path
 
 
-def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map_size, n_sections,
-                curves=(), sheet_sizes=(), worked=()) -> str:
-    h = r.haul
-    canal = is_canal(r)
-    big = [("Cut", f"{r.cut:,.0f} m³"), ("Fill", f"{r.fill:,.0f} m³"), ("Length", f"{r.length:,.0f} m"),
-           ("Bed slope", f"{r.steepest:g} %") if canal else ("Steepest", f"{r.steepest:.1f} %")]
-    cells = "".join(f'<td width="25%" align="center" style="background:#E7EDF7; padding:5px;">'
-                    f'<span style="color:#5D677A; font-size:8pt;">{html.escape(k.upper())}</span><br>'
-                    f'<span style="font-size:15pt; font-weight:600;">{html.escape(v)}</span></td>' for k, v in big)
-    H2 = '<h2 style="font-size:12pt; margin-top:8px;">'
-    what = "Canal earthworks and capacity" if canal else "Road earthworks estimate"
-    parts = [f'<p style="color:#5D677A; font-size:8pt; margin:0;">{APP_NAME} · {what}</p>',
-             f'<h1 style="font-size:16pt; margin:2px 0 4px 0;">{html.escape(plan.get("name", "Road"))}</h1>',
-             f'<p style="font-size:10pt; color:#1F3F77; margin:0 0 8px 0;">'
-             f'{"Lined drainage canal" if canal else "Road or path"}</p>',
-             er._table(meta, ("30%", "70%")), f"{H2}At a glance</h2>",
-             f'<p style="font-size:9pt;">{html.escape(r.headline())}<br>{html.escape(h.sentence())}</p>',
-             f'<table width="100%" cellspacing="4" cellpadding="0"><tr>{cells}</tr></table>']
-    warn = []
-    if r.side_limit:
-        warn.append(f"At {r.side_limit} station(s) a side slope did not meet the ground within {rdm.MAX_SIDE:g} m of "
-                    "the shoulder: the real volume there is larger.")
-    if r.no_data:
-        warn.append(f"{r.no_data} station(s) are off the drone map or in a gap; their heights were estimated.")
-    warn += [f"{t}: {x}" for t, x in r.warnings]
-    for wt in warn:
-        parts.append(f'<p style="background:#FFF4E0; color:#9A5B00; padding:6px;">⚠ {html.escape(wt)}</p>')
-    mw, mh = map_size
-    s = min(520 / mw, 470 / mh)
-    parts += [f"{H2}Quantities</h2>", er._table(q, header=("Quantity", "Value", "Note"), big=True),
-              '<h2 style="font-size:12pt; page-break-before: always;">Map</h2>',
-              f'<p align="center"><img src="map.png" width="{int(mw * s)}" height="{int(mh * s)}"></p>',
-              '<p style="color:#5D677A; font-size:8pt;">The strip shows the ground worked, from where the sides meet '
-              'the ground on the left to the right. Red = mostly cut, blue = mostly fill.</p>',
-              f"{H2}Side view</h2>", '<p><img src="profile.png" width="520" height="179"></p>',
-              (f'<p style="color:#5D677A; font-size:8pt;">{html.escape(vcurve_image_note(r))}</p>'
-               if r.pvis else ""),
-              f"{H2}Earth balance (mass haul)</h2>", '<p><img src="mass.png" width="520" height="150"></p>',
-              '<p style="color:#5D677A; font-size:8pt;">Where the line rises, more soil is cut than the fill needs so '
-              'far; where it falls, fill uses up soil. Between two balance points (circles) the cut soil can be '
-              'moved to the fill without hauling in or out.</p>']
-    if curves:
-        parts.append('<h2 style="font-size:12pt; page-break-before: always;">Curves</h2>')
-        parts.append(er._table([(c[0], c[3], c[4], c[5], c[6], c[9], c[10], c[11], c[12]) for c in curves],
-                               ("6%", "11%", "9%", "9%", "10%", "11%", "11%", "8%", "25%"),
-                               header=("No.", "Deflection °", "Radius m", "Tangent m", "Length m", "Start (PC)",
-                                       "End (PT)", "Turns", "Note")))
-        if any(c[12] != "-" for c in curves):
-            parts.append(f'<p style="color:#5D677A; font-size:8pt;">Smallest curve radius used for the checks: '
-                         f'{r.min_radius:g} m. Curves marked in the Note column are tighter than that, or were made '
-                         'smaller because the straights next to them are short; the designer accepted them.</p>')
-        parts.append(f"{H2}Stations</h2>")
-    else:
-        parts.append('<h2 style="font-size:12pt; page-break-before: always;">Stations</h2>')
-    if r.vcurves:
-        parts.insert(-1, f"{H2}Vertical curves</h2>")
-        parts.insert(-1, er._table(vcurve_html_rows(r), ("5%", "7%", "9%", "9%", "8%", "8%", "7%", "6%", "7%", "9%",
-                                                         "9%", "16%"),
-                                   header=("No.", "Type", "PVI", "PVI elev. m", "g1 %", "g2 %", "L m", "K", "K needed",
-                                           "PVC", "PVT", "High / low point")))
-        parts.insert(-1, f'<p style="color:#5D677A; font-size:8pt;">Design speed {r.speed} km/h. Parabolic curves '
-                         'centred on the PVI; z = z_PVC + g1·x + (g2 − g1)·x² / (2L). Minimum K for this speed '
-                         'from the table below (L = K × |A|, at least 0.6 × speed).</p>')
-        kt = [(f"{v} km/h", f"{a} m", b, c, f"{vt.min_length(v):.0f} m") for v, (a, b, c) in vt.K_TABLE.items()]
-        parts.insert(-1, er._table(kt, ("20%", "25%", "15%", "15%", "25%"),
-                                   header=("Design speed", "Stopping sight distance", "K crest", "K sag",
-                                           "Minimum length")))
-        parts.insert(-1, f'<p style="color:#5D677A; font-size:8pt;">Reference: {html.escape(vt.AASHTO_SOURCE)}.</p>')
-    rows = [(x[0], x[4] if x[4] is not None else "-", x[5], x[6] if x[6] is not None else "-", x[7], x[8],
-             x[9], x[10], x[13]) for x in station_rows(r)]
-    hdr = ("Station", "Ground m", "Bed m" if canal else "Road m", "Cut+/Fill− m", "Cut m²", "Fill m²", "Cut m³", "Fill m³", "Balance m³")
-    parts.append(er._table(rows, ("12%", "11%", "11%", "12%", "9%", "9%", "11%", "11%", "14%"), header=hdr))
-    parts.append('<h2 style="font-size:12pt; page-break-before: always;">Quantities by station</h2>')
-    parts.append(er._table(quantity_rows(r), ("18%", "16%", "16%", "16%", "17%", "17%"),
-                           header=("Station", "Distance m", "Cut area m²", "Fill area m²", "Cut volume m³",
-                                   "Fill volume m³")))
-    parts.append('<p style="color:#5D677A; font-size:8pt;">Distance and volumes are from the previous station '
-                 '(average end-area: V = (A1 + A2) / 2 × L).</p>')
-    for k in range(n_sections):
-        parts.append(f'<h2 style="font-size:12pt; page-break-before: always;">Cross-sections'
-                     f'{" (continued)" if k else ""}</h2>')
-        if not k:
-            parts.append('<p style="color:#5D677A; font-size:8pt;">Looking toward higher stations; offsets in metres, '
-                         'left negative; true scale (1 m across = 1 m up). Brown = ground now, navy = finished road '
-                         'and sides (bottom of the subbase under the road), red = cut, blue = fill. Green labels: '
-                         'cross slopes and side slopes. The box beside each section gives its areas and the volumes '
-                         'since the previous station.</p>')
-        sw, sh = sheet_sizes[k] if k < len(sheet_sizes) else (1600, 1550)
-        parts.append(f'<p><img src="sections{k}.png" width="520" height="{int(round(520 * sh / sw))}"></p>')
-    if worked:
-        parts.append('<h2 style="font-size:12pt; page-break-before: always;">How the numbers were computed '
-                     '(worked example)</h2>')
-        parts.append('<p style="font-size:8.5pt;">One line of each table recomputed by hand with this road\'s '
-                     'numbers, so every other line can be trusted the same way. The full methods are in the app under '
-                     '\u201cHow things are computed\u201d.</p>')
-        for t in worked:
-            parts.append(f'<p style="font-size:8.5pt;">\u2022 {html.escape(t)}</p>')
-    parts += ['<h2 style="font-size:12pt; page-break-before: always;">Design inputs</h2>', er._table(inp, ("40%", "60%")),
-              f"{H2}Data quality</h2>", er._table(quality, ("40%", "60%"))]
-    if files:
-        parts.append(f"{H2}Files in this package</h2>")
-        parts.append(er._table([(os.path.basename(f), er.FILE_NOTES.get(os.path.splitext(f)[1].lower(), ""))
-                                for f in files], ("50%", "50%")))
-    parts.append(f"{H2}Notes and disclaimer</h2>")
-    notes = list(ROAD_NOTES)
-    if r.standard in rdm.STANDARDS:
-        notes.insert(0, f"Road standard: {rdm.STANDARDS[r.standard]['label']}, from {rdm.DPWH_SOURCE}: "
-                        + rdm.STANDARD_NOTES + " Design speed: " + rdm.STANDARDS[r.standard]["speed"] + ".")
-    for p in notes + list(DISCLAIMER_PARAGRAPHS):
-        parts.append(f'<p style="font-size:8pt; color:#5D677A;">{html.escape(p)}</p>')
-    return "".join(parts)
-
 
 def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | None, out_dir: str, dst_crs: str,
                 info: dict, job=None, gis_formats=("gpkg", "kml", "dxf"), progress=None) -> list[str]:
@@ -728,7 +584,6 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     mimg = map_image(r, pts, dem_path, ortho_path)
     pimg = profile_image(r)
     himg = mass_haul_image(r)
-    sheets = xd.pages(xd.panels(canal_section_data(r, cdes))) if canal else sections_sheets(r, rd)
     mimg.save(base + "_map.png")
     pimg.save(base + "_side_view.png")
     himg.save(base + "_mass_haul.png")
@@ -738,10 +593,8 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
     listed = [f for f in dict.fromkeys([pdf] + files + [readme])
               if not f.lower().endswith((".aux.xml", ".pgw", ".wld", ".jgw", ".tfw"))]
     progress(75, "PDF report")
-    images = {"map.png": mimg, "profile.png": pimg, "mass.png": himg}
-    images.update({f"sections{k}.png": im for k, im in enumerate(sheets)})
-    er.write_pdf(pdf, report_html(r, plan, meta, q, inp, quality, listed, mimg.size, len(sheets), crows,
-                                  [im.size for im in sheets], worked), images)
+    from . import linear_report
+    linear_report.write_report(pdf, r, plan, info, dem_path, ortho_path, job, dst_crs, listed, mimg, worked, quality)
     files.insert(0, pdf)
     rn = list(ROAD_NOTES)
     for fmt in gis_formats:

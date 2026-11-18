@@ -10,7 +10,7 @@ import math
 import os
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QSlider,
+from PySide6.QtWidgets import (QButtonGroup, QTabWidget, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QSlider,
                                QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QMessageBox, QPlainTextEdit, QProgressBar, QProgressDialog, QPushButton, QRadioButton,
                                QScrollArea, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
@@ -128,14 +128,24 @@ class TypePointsDialog(QDialog):
 
 
 class ExportDialog(QDialog):
+    """Report and files for engineers. Roads and canals get the full report (1.2): paper, report number,
+    office lines, logo, signatories and the BEGIN / END elevation option; all but the number are remembered."""
+
     def __init__(self, plan_name: str, default_crs: str, lonlat, folder: str, parent=None, road: bool = False):
         super().__init__(parent)
+        from ..core.linear_report import DEFAULT_SIGNATORIES
+        from ..core.report_style import PAPERS
         self.setWindowTitle("Report and files for engineers")
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(700)
+        self.road = road
         p = _prefs()
         lay = QVBoxLayout(self)
-        lay.addWidget(label("A PDF report, an Excel workbook, spot levels and GIS / CAD files, all in one folder.",
-                            "", wrap=True))
+        lay.addWidget(label("A PDF report, an Excel workbook and GIS / CAD files, all in one folder.", "", wrap=True))
+        tabs = QTabWidget()
+        lay.addWidget(tabs, 1)
+        # ------------------------------------------------------------ report
+        rep = QWidget()
+        rl = QVBoxLayout(rep)
         f = QFormLayout()
         self.project = QLineEdit(plan_name)
         self.location = QLineEdit(p.get("location", ""))
@@ -148,36 +158,159 @@ class ExportDialog(QDialog):
         self.spacing = spin(1, 50, float(p.get("spacing", 5.0)), " m", 1, 1.0)
         self.spacing.setToolTip("Spot levels (ground, finished, cut/fill depth) are listed on a grid this far apart.")
         f.addRow("Spot levels every", self.spacing)
-        lay.addLayout(f)
-        lay.addWidget(label("Coordinate system for the files", "H2"))
+        self.report_no = QLineEdit("")
+        self.report_no.setPlaceholderText("e.g. 2026-RD-014 (optional)")
+        self.revision = QLineEdit("0")
+        self.revision.setMaximumWidth(80)
+        row = QHBoxLayout()
+        row.addWidget(self.report_no, 1)
+        self._rev_lbl = QLabel("Revision")
+        row.addWidget(self._rev_lbl)
+        row.addWidget(self.revision)
+        f.addRow("Report number", row)
+        self.paper = QComboBox()
+        for k, pp in PAPERS.items():
+            self.paper.addItem(pp.label, k)
+        self.paper.setCurrentIndex(max(0, self.paper.findData(p.get("paper", "a4_a3"))))
+        f.addRow("Paper", self.paper)
+        rl.addLayout(f)
+        self.road_box = QWidget()
+        rb = QVBoxLayout(self.road_box)
+        rb.setContentsMargins(0, 0, 0, 0)
+        rb.addWidget(label("Cover page", "H2"))
+        self.office = QPlainTextEdit("\n".join(p.get("office", [])))
+        self.office.setPlaceholderText("Up to three lines at the top of the cover, the last one in bold, e.g.\n"
+                                       "Province of …\nMunicipality of …\nMunicipal Engineering Office")
+        self.office.setFixedHeight(76)
+        rb.addWidget(self.office)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Office logo"))
+        self.logo = QLineEdit(p.get("logo", ""))
+        self.logo.setPlaceholderText("optional picture (PNG / JPG)")
+        row.addWidget(self.logo, 1)
+        b = QPushButton("Choose…")
+        b.clicked.connect(self._choose_logo)
+        row.addWidget(b)
+        rb.addLayout(row)
+        rb.addWidget(label("Signatures", "H2"))
+        rb.addWidget(label("Shown on the cover (document control) and at the end of the report. Names are "
+                           "remembered for the next report.", "Hint", wrap=True))
+        self.sig = QTableWidget(0, 3)
+        self.sig.setHorizontalHeaderLabels(["Role", "Name", "Position"])
+        self.sig.verticalHeader().setVisible(False)
+        hh = self.sig.horizontalHeader()
+        for c_ in range(3):
+            hh.setSectionResizeMode(c_, QHeaderView.Stretch)
+        sigs = [list(x) for x in (p.get("signatories") or DEFAULT_SIGNATORIES)]
+        if not p.get("signatories") and p.get("prepared_by"):
+            sigs[0][1] = p["prepared_by"]          # the name typed in earlier versions
+        for r_ in sigs:
+            self._add_sig(*r_)
+        self.sig.setFixedHeight(32 + 30 * 5)
+        rb.addWidget(self.sig)
+        row = QHBoxLayout()
+        b = QPushButton("Add a signatory")
+        b.clicked.connect(lambda: self._add_sig("", "", ""))
+        row.addWidget(b)
+        b = QPushButton("Remove selected")
+        b.clicked.connect(self._remove_sig)
+        row.addWidget(b)
+        row.addStretch(1)
+        rb.addLayout(row)
+        self.elev = QCheckBox("Add the elevation to the BEGIN and END coordinates")
+        self.elev.setChecked(bool(p.get("show_elev", False)))
+        rb.addWidget(self.elev)
+        rl.addWidget(self.road_box)
+        rl.addStretch(1)
+        tabs.addTab(rep, "Report")
+        # ------------------------------------------------------------ files
+        fil = QWidget()
+        fl = QVBoxLayout(fil)
+        fl.addWidget(label("Coordinate system for the files", "H2"))
         self.crs = CrsPicker(default=default_crs, lonlat=lonlat)
-        lay.addWidget(self.crs)
-        lay.addWidget(label("GIS / CAD files", "H2"))
+        fl.addWidget(self.crs)
+        fl.addWidget(label("GIS / CAD files", "H2"))
         self.fmts = FormatChecks(["gpkg", "shp", "geojson", "kml", "dxf"], True,
                                  p.get("formats", ["gpkg", "kml", "dxf"]))
-        lay.addWidget(self.fmts)
+        fl.addWidget(self.fmts)
         self.rasters = QCheckBox("Cut/fill depth and finished ground as GeoTIFF, colour map as PNG")
         self.rasters.setChecked(True)
-        lay.addWidget(self.rasters)
+        fl.addWidget(self.rasters)
+        fl.addWidget(label("Save to folder", "H2"))
+        self.folder = FolderPicker(folder)
+        fl.addWidget(self.folder)
+        fl.addStretch(1)
+        tabs.addTab(fil, "Files")
         if road:
             self.rasters.setVisible(False)
             self.spacing.setVisible(False)
             f.labelForField(self.spacing).setVisible(False)
-        lay.addWidget(label("Save to folder", "H2"))
-        self.folder = FolderPicker(folder)
-        lay.addWidget(self.folder)
+            self.by.setVisible(False)
+            f.labelForField(self.by).setVisible(False)
+        else:
+            self.road_box.setVisible(False)
+            for w_ in (self.report_no, self.revision, self.paper, self._rev_lbl):
+                w_.setVisible(False)
+            self._hide_row(f, "Report number")
+            self._hide_row(f, "Paper")
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Make report and files")
         bb.accepted.connect(self._ok)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
 
+    @staticmethod
+    def _hide_row(form, caption):
+        for i in range(form.rowCount()):
+            it = form.itemAt(i, QFormLayout.LabelRole)
+            if it is not None and it.widget() is not None and it.widget().text() == caption:
+                it.widget().setVisible(False)
+
+    def _add_sig(self, role, name, pos):
+        r_ = self.sig.rowCount()
+        self.sig.insertRow(r_)
+        for c_, v in enumerate((role, name, pos)):
+            self.sig.setItem(r_, c_, QTableWidgetItem(v))
+
+    def _remove_sig(self):
+        rows = sorted({i.row() for i in self.sig.selectedIndexes()}, reverse=True)
+        for r_ in rows:
+            self.sig.removeRow(r_)
+
+    def _choose_logo(self):
+        fn, _ = QFileDialog.getOpenFileName(self, "Office logo", os.path.dirname(self.logo.text()) or
+                                            os.path.expanduser("~"), "Pictures (*.png *.jpg *.jpeg)")
+        if fn:
+            self.logo.setText(fn)
+
+    def signatories(self) -> list:
+        out = []
+        for r_ in range(self.sig.rowCount()):
+            vals = [(self.sig.item(r_, c_).text().strip() if self.sig.item(r_, c_) else "") for c_ in range(3)]
+            if any(vals):
+                out.append(tuple(vals))
+        return out
+
+    def info(self) -> dict:
+        return {"project": self.project.text(), "location": self.location.text(), "prepared_by": self.by.text(),
+                "report_no": self.report_no.text().strip(), "revision": self.revision.text().strip(),
+                "paper": self.paper.currentData(), "office": [ln for ln in self.office.toPlainText().splitlines()
+                                                             if ln.strip()][:3],
+                "logo": self.logo.text().strip(), "signatories": self.signatories(),
+                "show_elev": self.elev.isChecked()}
+
     def _ok(self):
         if not self.crs.code():
             QMessageBox.warning(self, "Coordinate system", "Choose a valid coordinate system.")
             return
-        _save_prefs({"location": self.location.text(), "prepared_by": self.by.text(),
-                     "spacing": self.spacing.value(), "formats": self.fmts.selected()})
+        prefs = _prefs()
+        prefs.update({"location": self.location.text(), "prepared_by": self.by.text(),
+                      "spacing": self.spacing.value(), "formats": self.fmts.selected()})
+        if self.road:
+            i = self.info()
+            prefs.update({"paper": i["paper"], "office": i["office"], "logo": i["logo"],
+                          "signatories": [list(x) for x in i["signatories"]], "show_elev": i["show_elev"]})
+        _save_prefs(prefs)
         self.accept()
 
 
@@ -2388,7 +2521,7 @@ class PlanPanel(QWidget):
         t, plan = self.takeoff, self.plan()
         dem, ortho = self.page._dem_path(), self.page.files.get("ortho")
         out, crs = d.folder.path(), d.crs.code()
-        info = {"project": d.project.text(), "location": d.location.text(), "prepared_by": d.by.text()}
+        info = d.info()
         fmts, rasters, spacing = d.fmts.selected(), d.rasters.isChecked(), d.spacing.value()
         from ..core import earthworks_report as er, road_report as rr
         dlg = QProgressDialog("Making the report and files…", None, 0, 100, self)

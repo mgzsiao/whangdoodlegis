@@ -20,7 +20,8 @@ if os.path.exists(geoid):
     datas.append((geoid, "data"))
 
 hidden = (collect_submodules("rasterio") + collect_submodules("pyogrio") + collect_submodules("shapely")
-          + ["shapefile", "contourpy", "scipy.ndimage"])
+          + ["shapefile", "contourpy", "scipy.ndimage"]
+          + collect_submodules("reportlab.pdfbase") + collect_submodules("reportlab.graphics"))
 
 common = dict(pathex=[ROOT], datas=datas, hiddenimports=hidden,
               excludes=["tkinter", "matplotlib", "IPython", "pytest"])

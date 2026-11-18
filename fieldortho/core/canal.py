@@ -48,6 +48,9 @@ COVERS = {
     "asphalt": ("Asphalt pavement", 0.85, 0.95, PAVED_SOURCE),
     "roof": ("Roofs", 0.75, 0.95, PAVED_SOURCE),
 }
+# suggested starting sizes (agreed with the owner 18 November 2026; not a DPWH standard)
+SUGGESTED = dict(bw=0.5, depth=0.8, z=0.5, lining_t=0.10, n=0.015, freeboard=0.20, slope_pct=0.5, berm_w=0.5,
+                 cut_ratio=1.5, fill_ratio=2.0)
 KRAVEN = ((1 / 100, 3.5), (1 / 200, 3.0), (0.0, 2.1))            # (slope above, velocity m/s)
 V_MIN, V_MAX = 0.6, 3.0       # m/s suggested checks: silt settles below, lining wears above (concrete)
 

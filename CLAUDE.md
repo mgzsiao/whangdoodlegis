@@ -221,9 +221,26 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     flow step c_flow in plan_panel (`_p_cflow`, land cover table, Measure catchment Task). Old PDF report has a
     canal branch (stage G replaces it). Methods page "Lined drainage canal". Tests `tests/test_canal.py`; walkthrough
     `tests/gui_walkthrough8.py` (synthetic site).
-  - G new report
-    (B + C style, ReportLab, plan + profile sheet, two-column cross-sections, A4/A3 + long bond, quantities only,
-    editable signatories); H tests, methods pages, 1.2.0 installers.
+  - G done (road + canal report): ReportLab PDF in the agreed B + C style. `core/report_style.py` (fonts Manrope /
+    IBM Plex Sans / IBM Plex Mono in `resources/fonts`, OFL; IBM's own static Plex files, do NOT instance or rename
+    them - "Plex" is a Reserved Font Name; Manrope Bold / ExtraBold were instanced from the variable font; colours,
+    styles, `ReportDoc` with cover / body / sheet page templates (pagesize per template), "Page x of N" via a
+    numbered canvas, contents via multiBuild, `Cover`, tables, `Tag`, key figures, signatures; `PAPERS`:
+    "a4_a3" A4 + A3 sheets (plan/profile 1:1250, sections 4 per column down to 1:200 else 3), "a4" and "long"
+    (8.5 x 13 in) with landscape sheets of the same paper (1:2000; sections 4 down to 1:150, 3 down to 1:250,
+    else the largest scale)). `core/drawing_sheets.py`: plan + profile sheets (plan turned so the stretch runs
+    left to right, drone map / relief behind, works strips, edges, centre line, stations, curve labels, BEGIN / END
+    boxes with DMS + N / E (+ elevation if ticked), north arrow, scale bar; profile with V = H / 10 or smaller
+    when steep, PVIs with L / K, PVC / PVT, grades; data band; MATCH LINEs at round 50 m stations), cross-section
+    sheets (true scale, column-major numbering, BEGINNING / END, OGE / FGE / e / w header, hatched PCCP / subbase /
+    shoulder or lining / water, cut / fill, slope labels, elevation over offset labels in three staggered rows by
+    priority). `core/linear_report.py` assembles cover, contents, 1 glance, 2 survey, 3 criteria (standard / your
+    value / exception tags; canal: suggested sizes `canal.SUGGESTED`), 4 quantities (pay items 102 / 104 / 200 /
+    311 for roads, quantities only; canal without item numbers), 5 drawings, 6 limitations + disclaimer +
+    signatures, annexes A / B / C. Export dialog (`ExportDialog`, tabs Report / Files): report number, revision,
+    paper, office lines, logo, signatories table (remembered), elevation tick box. Tests `tests/test_report_pdf.py`.
+    The lot / pad and pile report (`earthworks_report.py`) still uses the 1.1 Qt report.
+  - H tests, methods pages, 1.2.0 installers.
 - The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.
 - Stages of 0.4-1.0 (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,
