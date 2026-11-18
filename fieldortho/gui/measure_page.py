@@ -68,7 +68,7 @@ class ProfileChart(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("white"))
+        p.fillRect(self.rect(), QColor(theme.PLOT_BG))
         if self.d is None or not np.isfinite(self.z).any():
             return
         ok = np.isfinite(self.z)
@@ -115,8 +115,8 @@ class ProfileChart(QWidget):
             fill.lineTo(px(di, zi))
         fill.lineTo(px(d[ok][-1], z0))
         fill.closeSubpath()
-        p.fillPath(fill, QColor(138, 106, 58, 45))
-        p.setPen(QPen(QColor("#8A6A3A"), 2))
+        p.fillPath(fill, QColor(201, 168, 119, 45))
+        p.setPen(QPen(QColor(theme.GROUND), 2))
         p.drawPath(path)
         p.setPen(QPen(QColor(theme.INK), 1))
         p.drawText(QRectF(L, 0, w, 12), Qt.AlignLeft, "height (m)")
@@ -251,7 +251,7 @@ class MeasurePage(Page):
         sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         w = QWidget()
         w.setObjectName("Page")
-        w.setStyleSheet("QWidget#Page { background: white; }")
+        w.setStyleSheet(f"QWidget#Page {{ background: {theme.CARD}; }}")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
@@ -961,8 +961,8 @@ class MeasurePage(Page):
                      StatCard("Net change", f"{r.net_m3:+,.0f} m³", "more material now" if r.net_m3 >= 0
                               else "less material now"),
                      StatCard("Area", fmt_area(r.area.area_2d), f"{r.area.area_2d / 1e4:.3f} ha")]
-            cards[0].t.setStyleSheet("color: #9C2A22;")
-            cards[1].t.setStyleSheet("color: #1E4E86;")
+            cards[0].t.setStyleSheet(f"color: {theme.CUT_TEXT};")
+            cards[1].t.setStyleSheet(f"color: {theme.FILL_TEXT};")
             self._grid(cards)
             if self.cmp_lineup.isChecked():
                 self.results.addWidget(label(f"The later survey was shifted {-r.offset:+.2f} m to line up with the "
@@ -1003,7 +1003,7 @@ class MeasurePage(Page):
                                    f"deepest {r.max_fill:.2f} m"),
                           StatCard("Net", f"{r.net_m3:,.0f} m³", "extra soil" if r.net_m3 >= 0 else "soil needed"),
                           StatCard("Total moved", f"{r.total_m3:,.0f} m³", "cut + fill")]
-                for c, col in ((cards[4], "#9C2A22"), (cards[5], "#1E4E86")):
+                for c, col in ((cards[4], theme.CUT_TEXT), (cards[5], theme.FILL_TEXT)):
                     c.t.setStyleSheet(f"color: {col};")
             self._grid(cards)
             if kind == "volume":

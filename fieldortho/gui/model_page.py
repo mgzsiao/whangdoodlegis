@@ -133,7 +133,7 @@ class ModelPage(Page):
         sc.setWidgetResizable(True)
         w = QWidget()
         w.setObjectName("Page")
-        w.setStyleSheet("QWidget#Page { background: white; }")
+        w.setStyleSheet(f"QWidget#Page {{ background: {theme.CARD}; }}")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(14, 12, 14, 12)
         mrow = QHBoxLayout()
@@ -216,7 +216,7 @@ class ModelPage(Page):
         sc.setWidgetResizable(True)
         w = QWidget()
         w.setObjectName("Page")
-        w.setStyleSheet("QWidget#Page { background: white; }")
+        w.setStyleSheet(f"QWidget#Page {{ background: {theme.CARD}; }}")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(14, 12, 14, 12)
         lay.addWidget(label("1. Draw the slope to test: tick “Slope steepness” or contours to find steep "

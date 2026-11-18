@@ -8,9 +8,9 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from . import theme
 
-CUT = QColor(196, 40, 32)
-FILL = QColor(30, 90, 170)
-GROUND = QColor(138, 106, 58)
+CUT = QColor(theme.CUT)
+FILL = QColor(theme.FILL)
+GROUND = QColor(theme.GROUND)
 NAVY = QColor(theme.ACCENT)
 
 
@@ -36,7 +36,7 @@ class TemplatePreview(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#F6F8FB"))
+        p.fillRect(self.rect(), QColor(theme.PLOT_BG))
         rd = self.rd
         if rd is None:
             return
@@ -61,7 +61,7 @@ class TemplatePreview(QWidget):
             bot = rdm.template(u, 0.0, rd, True)
             poly = QPolygonF(pts + [P(a, b) for a, b in zip(u[::-1], bot[::-1])] +
                              [P(-a, b) for a, b in zip(u, bot)])
-            p.setBrush(QColor(170, 170, 170))
+            p.setBrush(QColor(120, 128, 142))
             p.setPen(Qt.NoPen)
             p.drawPolygon(poly)
         # left side: fill slope down, right side: cut with optional ditch
@@ -113,7 +113,7 @@ class SectionView(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("white"))
+        p.fillRect(self.rect(), QColor(theme.PLOT_BG))
         st = self.st
         if st is None or st.offsets is None:
             return
@@ -137,7 +137,7 @@ class SectionView(QWidget):
         for k in (-1, 0, 1):
             zz = zc + k * H / 3 / sz
             y = T + H / 2 - k * H / 3
-            p.setPen(QPen(QColor("#EDF0F5"), 1))
+            p.setPen(QPen(QColor(theme.PLOT_GRID), 1))
             p.drawLine(QPointF(L, y), QPointF(L + W, y))
             p.setPen(QColor(theme.MUTED))
             p.drawText(QRectF(0, y - 7, L - 4, 14), Qt.AlignRight | Qt.AlignVCenter, f"{zz:.1f}")
@@ -163,7 +163,7 @@ class SectionView(QWidget):
                     started = False
             p.setPen(QPen(col, w))
             p.drawPath(path)
-        p.setPen(QPen(QColor("#C8CFDC"), 1, Qt.DashLine))
+        p.setPen(QPen(QColor(theme.MUTED), 1, Qt.DashLine))
         p.drawLine(P(0, z1 + 5), P(0, z0 - 5))
 
 
@@ -258,7 +258,7 @@ class RoadProfileView(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("white"))
+        p.fillRect(self.rect(), QColor(theme.PLOT_BG))
         if self.r is None:
             return
         if self.mode == "mass":
@@ -278,7 +278,7 @@ class RoadProfileView(QWidget):
         for k in range(3):
             zz = z0 + (z1 - z0) * k / 2
             y = T + H - H * k / 2
-            p.setPen(QPen(QColor("#EDF0F5"), 1))
+            p.setPen(QPen(QColor(theme.PLOT_GRID), 1))
             p.drawLine(QPointF(L, y), QPointF(L + W, y))
             p.setPen(QColor(theme.MUTED))
             p.drawText(QRectF(0, y - 7, L - 4, 14), Qt.AlignRight | Qt.AlignVCenter, f"{zz:.1f} m")
@@ -320,12 +320,12 @@ class RoadProfileView(QWidget):
             for c in self.r.vcurves:
                 q = P(c.pvi_s, c.pvi_z)
                 p.setPen(QPen(QColor(theme.INK), 1))
-                p.setBrush(QColor("white"))
+                p.setBrush(QColor(theme.PLOT_BG))
                 p.drawPolygon(QPolygonF([QPointF(q.x(), q.y() - 6), QPointF(q.x() - 5, q.y() + 3),
                                          QPointF(q.x() + 5, q.y() + 3)]))
                 p.setBrush(Qt.NoBrush)
                 if c.length > 0:
-                    p.setPen(QPen(QColor("#A0288C"), 2))
+                    p.setPen(QPen(QColor(theme.HIGHLIGHT), 2))
                     for s_, z_ in ((c.pvc_s, c.pvc_z), (c.pvt_s, c.pvt_z)):
                         q = P(s_, z_)
                         p.drawLine(QPointF(q.x(), q.y() - 6), QPointF(q.x(), q.y() + 6))

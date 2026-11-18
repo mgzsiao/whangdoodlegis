@@ -119,3 +119,74 @@ def test_luzon1911_mindanao_uses_mindanao_shift(tmp_path):
     lon, lat = crsmod.transform([124.65], [8.48], "EPSG:4253", "EPSG:4326", 124.65, 8.48)
     g = _read(files[0])[1][0]
     assert abs(g.x - lon[0]) < 1e-8 and abs(g.y - lat[0]) < 1e-8
+
+
+# ---------------------------------------------------------------- Change SHP CRS (1.2): parts, zip, sub-folders
+def _shp(folder, name, crs="EPSG:3125"):
+    os.makedirs(folder, exist_ok=True)
+    p = os.path.join(str(folder), name + ".shp")
+    ex.write_vector(_features(), p, "shp", crs, crs, layer=name, lonlat=(124.6, 8.5))
+    return p
+
+
+def test_any_part_brings_in_the_shapefile_and_parts_are_listed(tmp_path):
+    p = _shp(tmp_path / "in", "lots")
+    os.remove(str(tmp_path / "in" / "lots.cpg"))
+    parts = [str(tmp_path / "in" / f"lots{e}") for e in (".dbf", ".prj", ".shx", ".shp")]
+    assert cv.collect(parts) == [p]                              # four parts picked = one shapefile
+    it = cv.inspect(p)
+    assert it.parts == {".shp": True, ".shx": True, ".dbf": True, ".prj": True, ".cpg": False}
+    assert it.source_code == "EPSG:3125" and it.how == "read from the .prj" and not it.notes
+
+
+def test_subfolders_and_zip(tmp_path):
+    import zipfile
+    _shp(tmp_path / "in", "top")
+    _shp(tmp_path / "in" / "deeper", "inner")
+    assert [os.path.basename(p) for p in cv.collect([str(tmp_path / "in")])] == ["top.shp"]
+    assert sorted(os.path.basename(p) for p in cv.collect([str(tmp_path / "in")], recursive=True)) == \
+        ["inner.shp", "top.shp"]
+    z = str(tmp_path / "pack.zip")
+    with zipfile.ZipFile(z, "w") as zf:
+        for n in os.listdir(tmp_path / "in"):
+            if os.path.isfile(tmp_path / "in" / n):
+                zf.write(tmp_path / "in" / n, "data/" + n)
+    found = cv.collect([z])
+    assert len(found) == 1 and found[0].startswith("/vsizip/") and found[0].endswith("data/top.shp"), found
+    it = cv.inspect(found[0])
+    assert it.in_zip and it.name == "top.shp" and it.count == 2 and it.source_code == "EPSG:3125"
+    assert it.parts[".dbf"] and it.parts[".prj"]
+    files, _ = cv.convert(it, str(tmp_path / "out"), "EPSG:4326")
+    crs, geoms, attrs = _read([f for f in files if f.endswith(".shp")][0])
+    assert crs.to_epsg() == 4326 and attrs["name"] == ["Lot 1", "Lot 2 (ñ)"]
+
+
+def test_missing_shx_is_rebuilt_and_missing_dbf_keeps_shapes(tmp_path):
+    p = _shp(tmp_path / "in", "noshx")
+    os.remove(str(tmp_path / "in" / "noshx.shx"))
+    it = cv.inspect(p)
+    assert not it.error and it.parts[".shx"] is False and it.count == 2
+    assert any("rebuilt" in n for n in it.notes)
+    assert not os.path.exists(str(tmp_path / "in" / "noshx.shx"))      # the user's folder is left alone
+    files, notes = cv.convert(it, str(tmp_path / "out"), "EPSG:4326")
+    assert any("rebuilt" in n for n in notes)
+    assert len(_read([f for f in files if f.endswith(".shp")][0])[1]) == 2
+    tmp = it.tmpdir
+    cv.cleanup(it)
+    assert not os.path.exists(tmp)
+
+    q = _shp(tmp_path / "in2", "nodbf")
+    os.remove(str(tmp_path / "in2" / "nodbf.dbf"))
+    it = cv.inspect(q)
+    assert not it.error and it.count == 2 and any("without attributes" in n for n in it.notes)
+
+
+def test_detection_explains_how():
+    esri = ('PROJCS["Luzon_1911_Philippines_Zone_V",GEOGCS["GCS_Luzon_1911",DATUM["D_Luzon_1911",'
+            'SPHEROID["Clarke_1866",6378206.4,294.9786982]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]],'
+            'PROJECTION["Transverse_Mercator"],PARAMETER["False_Easting",500000.0],PARAMETER["False_Northing",0.0],'
+            'PARAMETER["Central_Meridian",125.0],PARAMETER["Scale_Factor",0.99995],PARAMETER["Latitude_Of_Origin",0.0],'
+            'UNIT["Meter",1.0]]')
+    code, how = cv.identify(esri)
+    assert code == "EPSG:25395" and how                      # by pyproj or by the ESRI name, same code
+    assert cv.identify("EPSG:32651") == ("EPSG:32651", "read from the file")

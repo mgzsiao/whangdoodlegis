@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
                                QStackedWidget, QVBoxLayout, QWidget)
 
@@ -87,8 +87,8 @@ class Stepper(QWidget):
         for i, (d, t) in enumerate(zip(self.dots, self.names)):
             done, cur = i < idx, i == idx
             d.setText("✔" if done else str(i + 1))
-            bg = theme.ACCENT if (done or cur) else "#E3E8F0"
-            d.setStyleSheet(f"background: {bg}; color: {'white' if (done or cur) else theme.MUTED}; "
+            bg = theme.ACCENT if (done or cur) else theme.SUBTLE
+            d.setStyleSheet(f"background: {bg}; color: {theme.ON_ACCENT if (done or cur) else theme.MUTED}; "
                             "border-radius: 12px; font-weight: 600; font-size: 12px;")
             t.setStyleSheet(f"color: {theme.INK if cur else theme.MUTED}; font-weight: {600 if cur else 400};"
                             "background: transparent;")
@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1360, 860)
         self.setMinimumSize(1100, 700)
+        # F11: true full screen and back (the app opens maximized, see app.py)
+        QShortcut(QKeySequence(Qt.Key_F11), self, self.toggle_full_screen)
         central = QWidget()
         lay = QHBoxLayout(central)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -199,7 +201,7 @@ class MainWindow(QMainWindow):
                                     ("flood", "flood", "Flood & landslide", lambda: self.show_page(self.models)),
                                     ("measure", "measure", "Measure & earthworks",
                                      lambda: self.show_page(self.measure)),
-                                    ("convert", "convert", "Convert files", lambda: self.show_page(self.convert))):
+                                    ("convert", "convert", "Change SHP CRS", lambda: self.show_page(self.convert))):
             b = NavButton(icon, text)
             b.clicked.connect(fn)
             v.addWidget(b)
@@ -306,6 +308,12 @@ class MainWindow(QMainWindow):
             self.hdr_actions.addWidget(aw)
             self._action_widgets.append(aw)
             aw.setVisible(True)
+
+    def toggle_full_screen(self):
+        if self.isFullScreen():
+            self.showMaximized()
+        else:
+            self.showFullScreen()
 
     # ------------------------------------------------------------------ navigation
     def show_page(self, page):

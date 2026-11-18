@@ -109,7 +109,7 @@ class PhotoMap(QWidget):
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#EEF2F0"))
+        p.fillRect(self.rect(), QColor(theme.PLOT_BG))
         if not self.points:
             p.setPen(QColor(theme.MUTED))
             p.drawText(self.rect(), Qt.AlignCenter, "Photo positions will appear here")
@@ -194,7 +194,7 @@ class RasterView(QGraphicsView):
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setBackgroundBrush(QBrush(QColor("#E9EDEB")))
+        self.setBackgroundBrush(QBrush(QColor(theme.MAP_BG)))
         self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

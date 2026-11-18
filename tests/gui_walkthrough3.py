@@ -39,6 +39,8 @@ QInputDialog.getText = staticmethod(lambda *a, **k: (next(_names, "Saved"), True
 app = QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
+from fieldortho.gui.theme import palette  # noqa: E402
+app.setPalette(palette())
 
 sys.path.insert(0, HERE)
 from synthetic_site import CX, CY, synthetic_job  # noqa: E402

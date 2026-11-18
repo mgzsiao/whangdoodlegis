@@ -33,6 +33,8 @@ QMessageBox.warning = staticmethod(lambda *a, **k: WARN.append(a[1:3]) or QMessa
 app = QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
+from fieldortho.gui.theme import palette  # noqa: E402
+app.setPalette(palette())
 sys.path.insert(0, HERE)
 from synthetic_site import synthetic_job  # noqa: E402
 

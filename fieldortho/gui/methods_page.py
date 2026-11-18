@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QFileDialog, QHBoxLayout, QLineEdit, QListWidget,
                                QPushButton, QSplitter, QTextBrowser)
 
 from ..core import methods, system
+from . import theme
 from .pages_setup import Page
 
 CSS = ("h2 { color:#1F3F77; font-size:17px; } h3 { color:#1A2233; font-size:14px; margin-top:14px; } "
@@ -34,8 +35,8 @@ class MethodsPage(Page):
         self.list.setMinimumWidth(260)
         self.list.setMaximumWidth(340)
         self.list.setWordWrap(True)
-        self.list.setStyleSheet("QListWidget { background: white; } QListWidget::item { padding: 8px 6px; "
-                                "border-bottom: 1px solid #EEF1F6; }")
+        self.list.setStyleSheet(f"QListWidget {{ background: {theme.CARD}; }} QListWidget::item {{ padding: 8px 6px; "
+                                f"border-bottom: 1px solid {theme.LINE}; }}")
         self.topics = methods.topics()
         for key, title, _h in self.topics:
             it = QListWidgetItem(title)
@@ -46,7 +47,7 @@ class MethodsPage(Page):
         self.view = QTextBrowser()
         self.view.setOpenExternalLinks(False)
         self.view.document().setDefaultStyleSheet(CSS)
-        self.view.setStyleSheet("QTextBrowser { background: white; padding: 12px 18px; }")
+        self.view.setStyleSheet(f"QTextBrowser {{ background: {theme.PAPER}; color: {theme.PAPER_INK}; padding: 12px 18px; }}")    # a white page, like its PDF
         split.addWidget(self.view)
         split.setStretchFactor(1, 1)
         self.root.addWidget(split, 1)

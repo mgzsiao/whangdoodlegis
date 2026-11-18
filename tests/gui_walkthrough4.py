@@ -40,6 +40,8 @@ plan_panel.ExportDialog.exec = lambda self: QDialog.Accepted
 app = QApplication.instance() or QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
+from fieldortho.gui.theme import palette  # noqa: E402
+app.setPalette(palette())
 job_dir = w3.synthetic_job(os.path.join(tmp, "jobs"))
 st = Settings(odm_path=os.path.join(HERE, "fake_odm"), jobs_root=os.path.dirname(job_dir), threads=2)
 st.recent_jobs = [job_dir]

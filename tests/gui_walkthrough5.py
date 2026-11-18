@@ -39,6 +39,8 @@ plan_panel.ExportDialog.exec = lambda self: QDialog.Accepted
 app = QApplication.instance() or QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
+from fieldortho.gui.theme import palette  # noqa: E402
+app.setPalette(palette())
 if REAL_JOB:      # work on a copy of the job list entry only; plans go to a temp folder below
     job_dir = REAL_JOB
 else:

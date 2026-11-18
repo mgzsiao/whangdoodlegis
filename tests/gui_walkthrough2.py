@@ -36,6 +36,8 @@ QMessageBox.warning = staticmethod(lambda *a, **k: print("WARNING DIALOG:", a[1:
 app = QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
+from fieldortho.gui.theme import palette  # noqa: E402
+app.setPalette(palette())
 st = Settings(odm_path=os.path.join(HERE, "fake_odm"), jobs_root=os.path.join(tmp, "jobs"), threads=2)
 # one processed job so 'Export...' and the job list have content
 photos = ph.scan_folder(os.environ.get("FIELDORTHO_TEST_PHOTOS", "/tmp/data/aukerman/images"))

@@ -27,23 +27,24 @@ def main() -> int:
 
     from . import APP_NAME
     from .gui.main_window import MainWindow
-    from .gui.theme import STYLESHEET
+    from .gui.theme import STYLESHEET, palette
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(APP_NAME)
-    # The design is light-only: in Windows dark mode Qt would otherwise give dialogs a dark
-    # background under the stylesheet's dark text (unreadable message boxes)
+    # The design is dark navy (1.2) whatever the Windows light/dark setting: tell Qt so its own
+    # parts (title bars where supported, message boxes) match, and give Fusion a dark palette
     hints = app.styleHints()
     if hasattr(hints, "setColorScheme"):          # Qt 6.8+
-        hints.setColorScheme(Qt.ColorScheme.Light)
+        hints.setColorScheme(Qt.ColorScheme.Dark)
     app.setStyle("Fusion")
+    app.setPalette(palette())
     app.setStyleSheet(STYLESHEET)
     icon = os.path.join(os.path.dirname(__file__), "resources", "icon.png")
     if os.path.exists(icon):
         app.setWindowIcon(QIcon(icon))
     w = MainWindow()
-    w.show()
+    w.showMaximized()                             # opens filling the screen; F11 = full screen
     return app.exec()
 
 

@@ -1,28 +1,34 @@
-"""Convert files: change the coordinate system of shapefiles, GeoPackages, KML, DXF and rasters."""
+"""Change SHP CRS: change the coordinate system of shapefiles (and GeoPackage, KML, DXF, GPX, rasters).
+
+Shapefiles come in as single parts, whole sets, folders (with sub-folders if ticked), .zip files, or by
+dragging them onto the page. Each row shows which parts were found and the coordinate system read from
+the .prj with its EPSG code and how it was identified."""
 from __future__ import annotations
 
+import html
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
-                               QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout,
+                               QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QProgressBar,
+                               QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from ..core import convert as cv, crs as crsmod, exporters as ex, system
+from . import theme
 from .export_widgets import CrsPicker, FolderPicker
 from .pages_setup import Page
 from .widgets import card, label
 from .workers import Task
 
-FILE_FILTER = ("Map files (*.shp *.gpkg *.geojson *.json *.kml *.kmz *.dxf *.gpx *.tif *.tiff *.img *.asc *.jp2);;"
-               "Shapefile (*.shp);;All files (*)")
+FILE_FILTER = ("Shapefiles, their parts and .zip (*.shp *.shx *.dbf *.prj *.cpg *.zip);;"
+               "All map files (*.shp *.shx *.dbf *.prj *.cpg *.zip *.gpkg *.geojson *.json *.kml *.kmz *.dxf *.gpx "
+               "*.tif *.tiff *.img *.asc *.jp2);;All files (*)")
 SOURCE_CHOICES = [(c, t) for c, t in crsmod.EXPORT_CHOICES]
+TYPE_NAMES = {".gpkg": "GeoPackage", ".geojson": "GeoJSON", ".json": "GeoJSON", ".kml": "KML (Google Earth)",
+              ".kmz": "KMZ (Google Earth)", ".dxf": "DXF (CAD)", ".gpx": "GPX (GPS)"}
 
 
-def _crs_text(it: cv.Item) -> str:
-    code = it.source_code
-    if not code:
-        return "⚠ Not stated – choose it"
+def crs_name(code: str) -> str:
     try:
         t = crsmod.label(code)
         if t == code or t.startswith("EPSG"):
@@ -30,7 +36,46 @@ def _crs_text(it: cv.Item) -> str:
             t = CRS.from_user_input(code).name
     except Exception:
         t = code
-    return (t + ("  (set by you)" if it.crs_code else ""))
+    return t
+
+
+def crs_html(it: cv.Item) -> str:
+    """'PRS92 / Philippines zone 5' over 'EPSG 3125 · read from the .prj' (or a warning)."""
+    code = it.source_code
+    if not code:
+        what = "No .prj" if it.parts else "Not stated"
+        return (f'<span style="color:{theme.WARN}; font-weight:600;">⚠ {what}: choose it</span><br>'
+                f'<span style="color:{theme.MUTED};">double-click or “Set coordinate system…”</span>')
+    e = crsmod._epsg_of(code)
+    how = "set by you" if it.crs_code else it.how
+    sub = " · ".join(x for x in ((f"EPSG {e}" if e else ""), how) if x)
+    return (f'<b>{html.escape(crs_name(code))}</b><br>'
+            f'<span style="color:{theme.MUTED};">{html.escape(sub)}</span>')
+
+
+def parts_html(it: cv.Item) -> str:
+    """Chips for .shp .shx .dbf .prj .cpg (missing ones struck through); the file type otherwise."""
+    if not it.parts:
+        e = os.path.splitext(it.name)[1].lower()
+        return f'<span style="color:{theme.MUTED};">{TYPE_NAMES.get(e, e[1:].upper() + " raster" if it.kind == "raster" else e[1:].upper())}</span>'
+    out = []
+    for e in cv.SHP_PARTS:
+        if it.parts.get(e):
+            out.append(f'<span style="color:{theme.ACCENT};">{e}</span>')
+        elif e == ".cpg":                       # optional: text encoding
+            out.append(f'<span style="color:{theme.MUTED};">{e}</span>')
+        else:
+            out.append(f'<span style="color:{theme.ERROR}; text-decoration:line-through;">{e}</span>')
+    return "&nbsp; ".join(out)
+
+
+def _cell_label(text: str) -> QLabel:
+    lab = QLabel(text)
+    lab.setTextFormat(Qt.RichText)
+    lab.setContentsMargins(8, 4, 6, 4)
+    lab.setStyleSheet("background: transparent;")
+    lab.setAttribute(Qt.WA_TransparentForMouseEvents)
+    return lab
 
 
 class SourceCrsDialog(QDialog):
@@ -60,48 +105,60 @@ class SourceCrsDialog(QDialog):
 
 class ConvertPage(Page):
     CRUMB = "Tools"
-    TITLE = "Convert files"
+    TITLE = "Change SHP CRS"
 
     def __init__(self, session):
         super().__init__(session)
         self.items: list[cv.Item] = []
         self.task = None
+        self.setAcceptDrops(True)
         addf = QPushButton("Add files…")
         addf.setObjectName("Primary")
+        addf.setToolTip("Pick shapefiles: any part (.shp, .dbf, .prj …) brings in the whole set.")
         addf.clicked.connect(self._add_files)
         addd = QPushButton("Add a folder…")
         addd.clicked.connect(self._add_folder)
-        self.set_actions([addf, addd])
+        addz = QPushButton("Add a .zip…")
+        addz.clicked.connect(self._add_zip)
+        self.set_actions([addf, addd, addz])
 
-        intro = label("Change the coordinate system of map files, for example a shapefile set from PRS92 to "
-                      "WGS 84. Attributes are kept. A shapefile is the .shp with its .dbf, .shx and .prj next "
-                      "to it: add the .shp. Everything runs on this computer.", "Muted", wrap=True)
-        self.root.addWidget(intro)
+        self.root.addWidget(label(
+            "Change the coordinate system of shapefiles, for example from PRS92 or Luzon 1911 to WGS 84, or back. "
+            "Add the shapefiles, a whole folder or a .zip, or drag them onto this page: the app keeps each "
+            "shapefile's parts together (.shp, .shx, .dbf, .prj, .cpg) and reads its coordinate system from the "
+            ".prj. Attributes are kept, and everything runs on this computer.", wrap=True))
+        self.root.addWidget(label("Also works for GeoPackage, KML / KMZ, GeoJSON, DXF, GPX and rasters such as "
+                                  "GeoTIFF.", "Muted", wrap=True))
 
         c1 = card()
         v = QVBoxLayout(c1)
         v.setContentsMargins(14, 10, 14, 10)
-        v.addWidget(label("1  FILES TO CONVERT", "Section"))
+        top = QHBoxLayout()
+        top.addWidget(label("1  FILES", "Section"), 1)
+        self.sub = QCheckBox("Include sub-folders")
+        self.sub.setToolTip("When adding a folder or dropping one here, also look inside its sub-folders.")
+        top.addWidget(self.sub)
+        v.addLayout(top)
         self.table = QTableWidget(0, 4)
         self.table.setObjectName("Flat")
-        self.table.setHorizontalHeaderLabels(["FILE", "TYPE", "CONTENTS", "NOW IN"])
+        self.table.setHorizontalHeaderLabels(["FILE", "PARTS FOUND", "CONTENTS", "COORDINATE SYSTEM NOW (DETECTED)"])
         hh = self.table.horizontalHeader()
         hh.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         hh.setSectionResizeMode(0, QHeaderView.Stretch)
         hh.setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.setColumnWidth(1, 80)
-        self.table.setColumnWidth(2, 200)
+        self.table.setColumnWidth(1, 220)
+        self.table.setColumnWidth(2, 170)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setMinimumHeight(170)
-        self.table.cellDoubleClicked.connect(lambda r, c: self._set_source() if c == 3 else None)
+        self.table.setMinimumHeight(190)
+        self.table.cellDoubleClicked.connect(lambda r, c: self._set_source())
         v.addWidget(self.table, 1)
         row = QHBoxLayout()
-        self.count = label("No files yet. Click “Add files…” or “Add a folder…”.",
-                           "Muted")
+        self.count = label("No files yet. Click “Add files…”, “Add a folder…” or “Add a .zip…”, "
+                           "or drag files here.", "Muted", wrap=True)
         row.addWidget(self.count, 1)
-        b = QPushButton("Set “Now in”…")
+        b = QPushButton("Set coordinate system…")
         b.setToolTip("Say which coordinate system the selected files are in (missing or wrong .prj).")
         b.clicked.connect(self._set_source)
         row.addWidget(b)
@@ -118,15 +175,16 @@ class ConvertPage(Page):
         g = QGridLayout(c2)
         g.setContentsMargins(14, 10, 14, 12)
         g.setHorizontalSpacing(12)
-        g.addWidget(label("2  CONVERT TO", "Section"), 0, 0, 1, 2)
+        g.addWidget(label("2  CONVERT ALL TO", "Section"), 0, 0, 1, 2)
         g.addWidget(QLabel("Coordinate system"), 1, 0, Qt.AlignTop)
         self.target = CrsPicker(crsmod.EXPORT_CHOICES, "EPSG:4326")
         g.addWidget(self.target, 1, 1)
-        g.addWidget(QLabel("Vector format"), 2, 0)
+        g.addWidget(QLabel("Save shapefiles as"), 2, 0)
         self.vfmt = QComboBox()
-        self.vfmt.addItem("Same as the original", cv.SAME)
+        self.vfmt.addItem("Shapefile (same as now)", cv.SAME)
         for k, (t, ext, _d) in ex.VECTOR_FORMATS.items():
-            self.vfmt.addItem(f"{t} ({ext})", k)
+            if k != "shp":
+                self.vfmt.addItem(f"{t} ({ext})", k)
         g.addWidget(self.vfmt, 2, 1)
         g.addWidget(QLabel("Raster format"), 3, 0)
         self.rfmt = QComboBox()
@@ -162,56 +220,84 @@ class ConvertPage(Page):
         self.log.setVisible(False)
         self.root.addWidget(self.log)
 
+    # ---------------------------------------------------------------- drag and drop
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() and any(u.isLocalFile() for u in e.mimeData().urls()):
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            e.acceptProposedAction()
+            self.add_paths(paths)
+
     # ---------------------------------------------------------------- list
-    def add_paths(self, paths):
-        have = {os.path.normcase(os.path.abspath(i.path)) for i in self.items}
-        bad = []
-        for p in cv.collect(paths):
-            if os.path.normcase(os.path.abspath(p)) in have:
+    def add_paths(self, paths, recursive: bool | None = None):
+        recursive = self.sub.isChecked() if recursive is None else recursive
+        have = {(i.path.lower() if i.in_zip else os.path.normcase(os.path.abspath(i.path))) for i in self.items}
+        bad, found = [], cv.collect(paths, recursive=recursive)
+        for p in found:
+            k = p.lower() if p.startswith("/vsizip/") else os.path.normcase(os.path.abspath(p))
+            if k in have:
                 continue
             it = cv.inspect(p)
             if it.error:
                 bad.append(f"{it.name}: {it.error}")
                 continue
             self.items.append(it)
+            have.add(k)
         self._fill()
         if bad:
             QMessageBox.warning(self, "Some files were skipped", "\n".join(bad[:15]))
+        return len(found)
 
     def _add_files(self):
-        ps, _ = QFileDialog.getOpenFileNames(self, "Map files to convert", os.path.expanduser("~"), FILE_FILTER)
+        ps, _ = QFileDialog.getOpenFileNames(self, "Shapefiles or other map files", os.path.expanduser("~"),
+                                             FILE_FILTER)
         if ps:
             self.add_paths(ps)
 
     def _add_folder(self):
-        d = QFileDialog.getExistingDirectory(self, "Folder with map files", os.path.expanduser("~"))
-        if d:
-            n = len(self.items)
-            self.add_paths([d])
-            if len(self.items) == n:
-                QMessageBox.information(self, "No map files", "No map files were found in that folder "
-                                        "(sub-folders are not searched).")
+        d = QFileDialog.getExistingDirectory(self, "Folder with shapefiles", os.path.expanduser("~"))
+        if d and not self.add_paths([d]):
+            QMessageBox.information(self, "No map files", "No map files were found in that folder" +
+                                    ("." if self.sub.isChecked() else
+                                     " (sub-folders were not searched: tick “Include sub-folders”)."))
+
+    def _add_zip(self):
+        ps, _ = QFileDialog.getOpenFileNames(self, ".zip files with shapefiles", os.path.expanduser("~"),
+                                             "Zip files (*.zip)")
+        if ps and not self.add_paths(ps):
+            QMessageBox.information(self, "No map files", "No shapefiles or other map files were found in the .zip.")
 
     def _fill(self):
         self.table.setRowCount(len(self.items))
         for r, it in enumerate(self.items):
-            vals = (it.name, "Vector" if it.kind == "vector" else "Raster", it.size, _crs_text(it))
-            for c, t in enumerate(vals):
-                x = QTableWidgetItem(t)
-                x.setToolTip(it.path if c == 0 else t)
-                if c == 3 and not it.source_code:
-                    x.setForeground(Qt.darkRed)
+            where = it.path if not it.in_zip else "{} (inside {})".format(*reversed(cv._zip_split(it.path)))
+            name = html.escape(it.name)
+            sub = [f'<span style="color:{theme.MUTED};">in {html.escape(os.path.basename(cv._zip_split(it.path)[0]))}'
+                   '</span>'] if it.in_zip else []
+            sub += [f'<span style="color:{theme.WARN};">{html.escape(n)}</span>' for n in it.notes]
+            cells = (f"<b>{name}</b>" + "".join("<br>" + s for s in sub), parts_html(it),
+                     html.escape(it.size), crs_html(it))
+            for c, t in enumerate(cells):
+                x = QTableWidgetItem("")
+                x.setToolTip(where if c == 0 else it.how if c == 3 else "")
                 self.table.setItem(r, c, x)
+                self.table.setCellWidget(r, c, _cell_label(t))
+        self.table.resizeRowsToContents()
         n = len(self.items)
         miss = sum(1 for i in self.items if not i.source_code)
-        self.count.setText(("No files yet." if not n else f"{n} file{'s' * (n != 1)}.") +
-                           (f"  ⚠ {miss} without a coordinate system: select and click "
-                            "“Set ‘Now in’…”." if miss else ""))
+        shp = sum(1 for i in self.items if i.parts)
+        txt = "No files yet." if not n else (f"{n} file{'s' * (n != 1)}" +
+                                            (f" ({shp} shapefile{'s' * (shp != 1)})." if shp else "."))
+        if miss:
+            txt += f"  ⚠ {miss} without a coordinate system: double-click the row or click “Set coordinate system…”."
+        self.count.setText(txt)
         if self.items:
             try:
-                b = self.items[0]
-                if b.source_code:
-                    import rasterio  # noqa: F401  (lon/lat for the datum note under the target picker)
+                b = next((i for i in self.items if i.source_code), None)
+                if b is not None:
                     self.target.set_lonlat(self._lonlat(b))
             except Exception:
                 pass
@@ -220,7 +306,7 @@ class ConvertPage(Page):
         if it.kind == "raster":
             return ex.site_lonlat(it.path)
         import pyogrio
-        info = pyogrio.read_info(cv.gdal_path(it.path), layer=it.layers[0] if it.layers else None)
+        info = pyogrio.read_info(cv.gdal_path(it.src_path), layer=it.layers[0] if it.layers else None)
         b = info.get("total_bounds")
         return cv._lonlat_of(b, it.source_code)
 
@@ -240,10 +326,13 @@ class ConvertPage(Page):
 
     def _remove(self):
         for r in reversed(self._rows()):
+            cv.cleanup(self.items[r])
             del self.items[r]
         self._fill()
 
     def _clear(self):
+        for it in self.items:
+            cv.cleanup(it)
         self.items = []
         self._fill()
 
@@ -256,7 +345,8 @@ class ConvertPage(Page):
         if miss:
             QMessageBox.warning(self, "Coordinate system needed",
                                 "We cannot convert these files without knowing their coordinate system:\n\n" +
-                                "\n".join(miss[:12]) + "\n\nSelect them and click “Set ‘Now in’…”.")
+                                "\n".join(miss[:12]) + "\n\nDouble-click each one, or select them and click "
+                                "“Set coordinate system…”.")
             return
         dst = self.target.code()
         if not dst:
@@ -268,8 +358,8 @@ class ConvertPage(Page):
             return
         items = list(self.items)
         vf, rf = self.vfmt.currentData(), self.rfmt.currentData()
-        same_dir = [i.name for i in items if os.path.normcase(os.path.dirname(os.path.abspath(i.path))) ==
-                    os.path.normcase(os.path.abspath(out))]
+        same_dir = [i.name for i in items if not i.in_zip and
+                    os.path.normcase(os.path.dirname(os.path.abspath(i.path))) == os.path.normcase(os.path.abspath(out))]
         if same_dir and QMessageBox.question(
                 self, "Same folder", "The new files will be saved next to the originals (with the coordinate "
                 "system in the name, e.g. _EPSG4326). Continue?") != QMessageBox.Yes:

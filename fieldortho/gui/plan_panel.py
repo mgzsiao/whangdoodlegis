@@ -97,7 +97,7 @@ class TypePointsDialog(QDialog):
         self.text = QPlainTextEdit()
         self.text.setPlaceholderText("699512.40, 980233.10\n699540.00, 980231.75\n699541.20, 980205.00\n"
                                      "699513.00, 980206.30\n\nor degrees:  124°47'10\"E, 8°52'31\"N")
-        self.text.setStyleSheet("background: white; color: #1A2233;")
+        self.text.setStyleSheet(f"background: {theme.INPUT_BG}; color: {theme.INK};")
         self.text.setMinimumHeight(170)
         lay.addWidget(self.text)
         self.msg = label("", "Error", wrap=True)
@@ -214,7 +214,7 @@ class PlanPanel(QWidget):
         sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         w = QWidget()
         w.setObjectName("Page")
-        w.setStyleSheet("QWidget#Page { background: white; }")
+        w.setStyleSheet(f"QWidget#Page {{ background: {theme.CARD}; }}")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(10)
@@ -225,7 +225,7 @@ class PlanPanel(QWidget):
         self.bar.setFixedHeight(6)
         lay.addWidget(self.bar)
         self.done_box = label("", "Muted", wrap=True)
-        self.done_box.setStyleSheet(f"background: #F6F8FB; border-radius: 8px; padding: 8px 10px; "
+        self.done_box.setStyleSheet(f"background: {theme.SUBTLE}; border-radius: 8px; padding: 8px 10px; "
                                     f"color: {theme.MUTED}; font-size: 12px;")
         lay.addWidget(self.done_box)
         self.title = label("", "H1")
@@ -613,7 +613,7 @@ class PlanPanel(QWidget):
         self.targets = QPlainTextEdit()
         self.targets.setPlaceholderText("50, 125.40\n120, 127.10\n200, 126.00")
         self.targets.setFixedHeight(80)
-        self.targets.setStyleSheet("background: white; color: #1A2233;")
+        self.targets.setStyleSheet(f"background: {theme.INPUT_BG}; color: {theme.INK};")
         self.targets.textChanged.connect(self._changed)
         lay.addWidget(self.targets)
         for b in self.pgroup.buttons():
@@ -717,7 +717,7 @@ class PlanPanel(QWidget):
                     f_.setBold(True)
                     it.setFont(f_)
                     from PySide6.QtGui import QColor
-                    it.setBackground(QColor("#FFE9A8"))
+                    it.setBackground(QColor(theme.WARN_SOFT))
                 self.k_table.setItem(i, c, it)
 
     def _vc_speed_changed(self, _i):
@@ -1435,8 +1435,8 @@ class PlanPanel(QWidget):
                           (f"{t.level:.2f} m" if t.kind == "pad" else f"{t.area.area_3d:,.0f} m²"),
                           (f"{t.level_high:.2f} → {t.level_low:.2f} m" if t.kind == "pad" and t.slope_pct > 0
                            else "in the middle" if t.kind == "pad" else "following the slopes"))]
-        cards[0].t.setStyleSheet("color: #9C2A22;")
-        cards[1].t.setStyleSheet("color: #1E4E86;")
+        cards[0].t.setStyleSheet(f"color: {theme.CUT_TEXT};")
+        cards[1].t.setStyleSheet(f"color: {theme.FILL_TEXT};")
         g = QGridLayout()
         g.setSpacing(8)
         for i, c in enumerate(cards):
@@ -1471,8 +1471,8 @@ class PlanPanel(QWidget):
                  StatCard("Total moved", f"{r.total:,.0f} m³", "dig + fill"),
                  StatCard("Length", f"{r.length:,.0f} m", f"{len(r.stations)} stations"),
                  StatCard("Steepest part", f"{r.steepest:.1f} %", f"near {rdm.station_label(r.steepest_at)}")]
-        cards[0].t.setStyleSheet("color: #9C2A22;")
-        cards[1].t.setStyleSheet("color: #1E4E86;")
+        cards[0].t.setStyleSheet(f"color: {theme.CUT_TEXT};")
+        cards[1].t.setStyleSheet(f"color: {theme.FILL_TEXT};")
         g = QGridLayout()
         g.setSpacing(8)
         for i, c in enumerate(cards):

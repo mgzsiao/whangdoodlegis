@@ -133,7 +133,7 @@ class GeorefPage(Page):
         sc.setWidgetResizable(True)
         holder = QWidget()
         holder.setObjectName("Page")
-        holder.setStyleSheet("QWidget#Page { background: white; }")
+        holder.setStyleSheet(f"QWidget#Page {{ background: {theme.CARD}; }}")
         self.labels_lay = QVBoxLayout(holder)
         self.labels_lay.setContentsMargins(0, 4, 4, 0)
         self.labels_lay.setSpacing(6)

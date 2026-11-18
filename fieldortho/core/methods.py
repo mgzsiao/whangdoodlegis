@@ -222,10 +222,15 @@ def topics() -> list[tuple[str, str, str]]:
             _sec("Tip", "Use the surface model (DSM) for stockpiles: the bare-ground DTM removes piles as if they "
                  "were objects."),
         ])),
-        ("convert", "Coordinate systems and Convert files", "".join([
+        ("convert", "Coordinate systems and Change SHP CRS", "".join([
             _sec("Method", "Coordinates are transformed with PROJ (the same library as QGIS). The system of each "
                  "file is read from its .prj / header; ESRI names for PRS92 and Luzon 1911 are matched to their EPSG "
                  "codes so the official datum shifts are used. Attributes are copied unchanged."),
+            _sec("Shapefiles", "A shapefile is several files with the same name: .shp (shapes), .shx (index), "
+                 ".dbf (attributes), .prj (coordinate system) and .cpg (text encoding). Picking any of them brings "
+                 "in the whole set; files inside a .zip are read in place. A missing .shx is rebuilt from the .shp "
+                 "in a temporary copy (your folder is not changed); without a .dbf only the shapes can be "
+                 "converted; without a .prj you say which system the file is in."),
             _sec("Datum shifts used", _list(
                 "PRS92 ↔ WGS 84: official 7-parameter transformation (EPSG:15708).",
                 f"Luzon 1911 ↔ WGS 84: Mindanao {lm} m, rest of the Philippines {lo} m (chosen by location).",

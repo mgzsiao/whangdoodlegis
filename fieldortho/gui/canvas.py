@@ -6,6 +6,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QFrame, QGraphicsItemGroup, QGraphicsScene, QGraphicsView
 
+from . import theme
+
 
 def qimage_from(arr: np.ndarray) -> QImage:
     arr = np.ascontiguousarray(arr)
@@ -28,7 +30,7 @@ class MapCanvas(QGraphicsView):
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setBackgroundBrush(QBrush(QColor("#E9EDEB")))
+        self.setBackgroundBrush(QBrush(QColor(theme.MAP_BG)))
         self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

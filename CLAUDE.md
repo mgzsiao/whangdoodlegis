@@ -95,8 +95,11 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
   institutions (owner's choice). Do not mention DILG in the app (owner's choice).
 - "Support the Developer" shows only `resources/support_qr.png` (InstaPay QR). Never add the owner's name,
   phone number or account details to it (owner's choice).
-- UI: navy theme (`gui/theme.py`), navigation rail + title bar + status bar (`gui/main_window.py`), logo drawn
-  by `packaging/make_icon.py`. Guided inputs in `gui/inputs.py` (DMS boxes, grid spacing, metres/feet).
+- UI: dark navy theme since 1.2 (`gui/theme.py`: every GUI colour is a constant there, plus a dark Fusion
+  palette applied in `app.py`; paper-like views - methods text, QR - stay white), navigation rail + title bar +
+  status bar (`gui/main_window.py`), logo drawn by `packaging/make_icon.py`. Opens maximized, F11 = full screen.
+  Icon glyphs in `theme.ICONS` are written as `chr(0x....)`: editors silently drop the private-use characters.
+  Guided inputs in `gui/inputs.py` (DMS boxes, grid spacing, metres/feet).
   The Jobs list (`gui/jobs_page.py`) shows drone jobs plus georef sessions and flood/landslide scenarios
   recorded in `%APPDATA%\WhangDoodleGIS\activity.json` (`core/activity.py`).
 - The installer bundles ODM's OpenPointClass model (`packaging\redist\openpointclass\model.bin`) into
@@ -172,8 +175,21 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     formulas and sources, searchable, Save as PDF. Keep it in step with the code.
   - Tests: test_filesets, test_convert, test_georef_manual, test_vertical; walkthroughs 6 (own files, convert,
     methods) and 7 (manual grid).
+- 1.2.0 (in progress; owner's plan of 2026-11-18, mockup https://claude.ai/artifact/AY7Ac34pmkdA5k4iY7nWVC,
+  report style samples https://claude.ai/artifact/GML47tRUFdHTyj6Z3ZdsxZ). Stages A-H:
+  - A done: dark navy theme; opens maximized, F11 full screen; "Convert files" renamed "Change SHP CRS"
+    (`core/convert.py`: any shapefile part brings in its .shp, folders with optional sub-folders, .zip read in place
+    via /vsizip/, parts-found check, missing .shx rebuilt in a temp copy, missing .dbf = shapes only,
+    `identify()` says how the CRS was found; GPKG/KML/GeoJSON/DXF/GPX/rasters still accepted).
+  - B "dig" -> "Cut" everywhere + DPWH terms, PCCP + aggregate subbase layers, DPWH ditch, 2:1 fill;
+    C guided road steps (Back / Change dimensions / OK, next), curve minimums R 30 m (Tourism 50 m), vertical
+    curves >= 60 m with explanations; D "follow the ground" with the designer's requirements; E superelevation
+    (AASHTO Method 5, emax 6%), widening (AASHTO, SU truck), AASHTO 1993 rigid check; F canal model + design flow
+    by the Rational Method (show the owner the runoff-coefficient table and its source first); G new report
+    (B + C style, ReportLab, plan + profile sheet, two-column cross-sections, A4/A3 + long bond, quantities only,
+    editable signatories); H tests, methods pages, 1.2.0 installers.
 - The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.
-- Next stages (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
+- Stages of 0.4-1.0 (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,
   user-entered cross-section); 4 guided smooth curves, optional DPWH presets (show values + sources to the owner
   first), mass haul; 5 LandXML for Civil 3D, DXF, Excel, full PDF; 6 compare two surveys, 3-D export .dae + STL.

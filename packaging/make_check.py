@@ -1,4 +1,5 @@
-"""Draws the white tick used inside checked checkboxes (fieldortho/resources/check.png)."""
+"""Draws the white tick used inside checked checkboxes (fieldortho/resources/check.png) and the light
+drop-down chevron of the dark theme (chevron_light.png)."""
 import os
 import sys
 
@@ -18,3 +19,13 @@ if __name__ == "__main__":
     p.end()
     img.save(os.path.join(RES, "check.png"))
     print("check.png written")
+    # light chevron for combo boxes on the dark navy theme (1.2)
+    img = QImage(32, 32, QImage.Format_ARGB32)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor("#B4C2DA"), 3.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.drawPolyline([QPointF(8, 12), QPointF(16, 20), QPointF(24, 12)])
+    p.end()
+    img.save(os.path.join(RES, "chevron_light.png"))
+    print("chevron_light.png written")

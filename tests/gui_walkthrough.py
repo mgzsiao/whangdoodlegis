@@ -27,6 +27,8 @@ PHOTOS = os.environ.get("FIELDORTHO_TEST_PHOTOS", "/tmp/data/aukerman/images")
 app = QApplication(sys.argv)
 app.setStyle("Fusion")
 app.setStyleSheet(STYLESHEET)
+from fieldortho.gui.theme import palette  # noqa: E402
+app.setPalette(palette())
 st = Settings(odm_path=os.path.join(HERE, "fake_odm"), jobs_root=os.path.join(tmp, "jobs"), threads=2)
 st.save()
 w = MainWindow(st)

@@ -189,7 +189,7 @@ class DropZone(QFrame):
         super().__init__()
         self.setAcceptDrops(True)
         self.setMinimumHeight(170)
-        self.setStyleSheet(f"QFrame {{ background: white; border: 2px dashed {theme.LINE}; border-radius: 12px; }}"
+        self.setStyleSheet(f"QFrame {{ background: {theme.CARD}; border: 2px dashed {theme.LINE}; border-radius: 12px; }}"
                            "QLabel { border: none; background: transparent; }")
         lay = QVBoxLayout(self)
         lay.setAlignment(Qt.AlignCenter)
