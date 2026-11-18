@@ -188,20 +188,26 @@ def topics() -> list[tuple[str, str, str]]:
             _sec("Horizontal curves", "At a bend of angle Δ the road follows a circular arc of radius R:",
                  _f("T = R·tan(Δ/2)   L = π·R·Δ/180   E = R·(1/cos(Δ/2) − 1)"
                     "   M = R·(1 − cos(Δ/2))"),
-                 "Curves are made smaller if the straights next to them are too short."),
+                 "Curves are made smaller if the straights next to them are too short. Every curve is checked "
+                 "against the smallest radius (30 m; 50 m for Tourism roads, DPWH D.O. 112 s. 2019; the designer "
+                 "may type another value): tighter or shrunk curves are warned about and marked in the report's "
+                 "curve table."),
             _sec("Road height", _list(
                 "Keep slopes gentle: the ground is smoothed (moving average over twice the station spacing, at "
                 "least 20 m) and grades are limited forward and backward to the maximum %.",
                 "Follow the ground (smoothed), keep it level, one straight slope, or through typed heights.")),
             _sec("Vertical curves", "Straight grades meet at grade change points (PVI). The app proposes the PVIs "
-                 "by simplifying the chosen road height (Douglas–Peucker, 0.10 m, at least 20 m apart); you "
-                 "can edit them. At each PVI a symmetric parabola joins the grades g1 and g2 (%):",
-                 _f("A = g2 − g1     L = max(K·|A|, 0.6 × speed)     K = L / |A|",
+                 "by simplifying the chosen road height (Douglas–Peucker, 0.10 m), at least the shortest curve "
+                 "apart (60 m by default) and half of it from the start and the end; you can edit them. At each "
+                 "PVI a symmetric parabola joins the grades g1 and g2 (%):",
+                 _f("A = g2 − g1     L = max(K·|A|, 0.6 × speed, shortest curve)     K = L / |A|",
                     "z(x) = z_PVC + g1·x/100 + A·x² / (200·L)    x = metres after the PVC",
                     "PVC = PVI − L/2,   PVT = PVI + L/2,   e = A·L / 800 (curve to PVI)",
                     "high / low point at x = −g1·L / A"),
                  "Crest curves (over a hump) use K for stopping sight distance, sag curves (in a dip) K for "
-                 "headlight reach. Curves are shortened if they would overlap and then flagged.",
+                 "headlight reach. The shortest curve (PVC to PVT) is the designer's rule, 60 m by default, smoother "
+                 "than AASHTO's 0.6 × speed. Curves are shortened if they would overlap; they are then warned "
+                 "about and marked in the report's vertical curve table.",
                  _k_table(), f"<p><i>Source: {vt.AASHTO_SOURCE}.</i></p>"),
             _sec("Cross-sections", "At each station, across the road (looking toward higher stations): carriageway "
                  "with a crown (cross slope from the centre) and shoulders; the concrete (PCCP) and the aggregate "

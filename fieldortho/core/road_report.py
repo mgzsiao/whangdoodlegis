@@ -153,7 +153,7 @@ def vcurve_html_rows(r: rdm.RoadResult) -> list[tuple]:
     out = []
     for row in vt.rows(r.vcurves, rdm.station_label):
         out.append((row[0], row[1], row[2], f"{row[3]:.3f}", f"{row[4]:+.2f}", f"{row[5]:+.2f}", f"{row[7]:.1f}",
-                    row[8], row[9], row[10], row[12], row[15]))
+                    row[8], row[9], row[10], row[12], row[15] if row[16] == "-" else f"{row[15]} · {row[16]}"))
     return out
 
 
@@ -441,14 +441,14 @@ def write_workbook(path, title, meta, q, inp, stations, sections, notes, curves=
     wst.freeze_panes = "B2"
     wst.row_dimensions[1].height = 45
     if curves:
-        table(wb.create_sheet("Curves"), rdm.CURVE_HEADER, curves, 1, [8, 15, 15, 13, 11, 13, 14, 13, 16, 15, 15, 8])
+        table(wb.create_sheet("Curves"), rdm.CURVE_HEADER, curves, 1, [8, 15, 15, 13, 11, 13, 14, 13, 16, 15, 15, 8, 34])
     if qty:
         wq = wb.create_sheet("Quantities by station")
         table(wq, QTY_HEADER, qty, 1, [12, 13, 14, 14, 16, 16])
         wq.freeze_panes = "A2"
     if vrows:
         table(wb.create_sheet("Vertical curves"), vt.ROW_HEADER, vrows, 1,
-              [7, 9, 12, 14, 12, 12, 9, 11, 9, 9, 12, 14, 12, 14, 14, 26])
+              [7, 9, 12, 14, 12, 12, 9, 11, 9, 9, 12, 14, 12, 14, 14, 26, 34])
         wk = wb.create_sheet("K values (AASHTO 2018)")
         table(wk, ("Design speed (km/h)", "Stopping sight distance (m)", "K crest", "K sag", "Minimum length (m)"),
               [(v, a, b, c, round(vt.min_length(v), 1)) for v, (a, b, c) in vt.K_TABLE.items()], 1,
@@ -510,10 +510,14 @@ def report_html(r: rdm.RoadResult, plan: dict, meta, q, inp, quality, files, map
               'moved to the fill without hauling in or out.</p>']
     if curves:
         parts.append('<h2 style="font-size:12pt; page-break-before: always;">Curves</h2>')
-        parts.append(er._table([(c[0], c[3], c[4], c[5], c[6], c[9], c[10], c[11]) for c in curves],
-                               ("8%", "14%", "12%", "12%", "14%", "14%", "14%", "12%"),
+        parts.append(er._table([(c[0], c[3], c[4], c[5], c[6], c[9], c[10], c[11], c[12]) for c in curves],
+                               ("6%", "11%", "9%", "9%", "10%", "11%", "11%", "8%", "25%"),
                                header=("No.", "Deflection °", "Radius m", "Tangent m", "Length m", "Start (PC)",
-                                       "End (PT)", "Turns")))
+                                       "End (PT)", "Turns", "Note")))
+        if any(c[12] != "-" for c in curves):
+            parts.append(f'<p style="color:#5D677A; font-size:8pt;">Smallest curve radius used for the checks: '
+                         f'{r.min_radius:g} m. Curves marked in the Note column are tighter than that, or were made '
+                         'smaller because the straights next to them are short; the designer accepted them.</p>')
         parts.append(f"{H2}Stations</h2>")
     else:
         parts.append('<h2 style="font-size:12pt; page-break-before: always;">Stations</h2>')
@@ -625,7 +629,7 @@ def export_road(r: rdm.RoadResult, plan: dict, dem_path: str, ortho_path: str | 
                                          else None, append=(fmt == "gpkg"))
     progress(35, "Tables")
     srows, xrows = station_rows(r), section_rows(r)
-    crows = rdm.curve_rows(r.alignment) if r.alignment is not None else []
+    crows = rdm.curve_rows(r.alignment, r.min_radius) if r.alignment is not None else []
     vrows = vt.rows(r.vcurves, rdm.station_label)
     qrows = quantity_rows(r)
     rd = rdm.design_from(plan)

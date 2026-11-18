@@ -199,6 +199,8 @@ def test_dpwh_checks(flat):
     rd = plain(start_z=101.0, radii=[20], standard="fmr", fill_ratio=1.2)
     r = rdm.design_road(flat, pts, rd)
     titles = [t for t, _ in r.warnings]
-    assert "Curve 1 is too tight" in titles and "Fill sides too steep" in titles
+    assert "Curve 1 is tighter than 30 m" in titles and "Fill sides too steep" in titles
+    from fieldortho.core import road_report  # noqa: F401  (the curve table marks it)
+    assert rdm.curve_rows(r.alignment, r.min_radius)[0][-1].startswith("BELOW the smallest radius 30 m")
     assert rdm.STANDARDS["fmr"]["width"] == 6.1 and rdm.STANDARDS["fmr_low"]["width"] == 5.0
     assert rdm.STANDARDS["tourism"]["min_radius"] == 50 and rdm.STANDARDS["fmr"]["min_radius"] == 30

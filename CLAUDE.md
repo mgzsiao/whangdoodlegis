@@ -188,8 +188,14 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     `ditch_out`) counted as cut; layer quantities `pccp_vol` / `pccp_area` / `agg_vol`. DPWH presets labelled by
     traffic ("Under 200 vehicles a day", "200 to 400 vehicles a day", "Tourism road") with subbase 200 mm, fill
     2 : 1, cut 1.5 : 1 (Figure 3). `design_from` loads pre-1.2 plans unchanged (pavement_t -> pccp_t, ditch 1 : 1).
-  - C guided road steps (Back / Change dimensions / OK, next), curve minimums R 30 m (Tourism 50 m), vertical
-    curves >= 60 m with explanations; D "follow the ground" with the designer's requirements; E superelevation
+  - C done: road steps are type, draw, std, carriage, shoulders, layers, ditch, slopes, curves, stations, rise,
+    vcurves, soil, result. Part steps (`gui/road_parts.py` PartForm) show values as text marked "standard" /
+    "your value · standard x" until "Change dimensions" (footer button) turns them into inputs; DPWH limits warned.
+    `RoadDesign.min_radius` (30 m default, Tourism 50 m, editable on the curves step; tighter or shrunk curves
+    warned and marked in the curve table "Note") and `vc_min` (60 m: L = max(K|A|, 0.6 V, vc_min); proposed PVIs
+    vc_min apart and vc_min/2 from the ends; shortened curves marked "SHORTENED" in the vertical curve table).
+    Pre-1.2 plans load with vc_min 0 (old behaviour).
+  - D "follow the ground" with the designer's requirements; E superelevation
     (AASHTO Method 5, emax 6%), widening (AASHTO, SU truck), AASHTO 1993 rigid check; F canal model + design flow
     by the Rational Method (show the owner the runoff-coefficient table and its source first); G new report
     (B + C style, ReportLab, plan + profile sheet, two-column cross-sections, A4/A3 + long bond, quantities only,

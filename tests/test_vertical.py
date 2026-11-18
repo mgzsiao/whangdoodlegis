@@ -45,7 +45,8 @@ def test_length_from_speed_and_fit_between_pvis():
     a, b = cs[0], cs[1]
     assert a.pvt_s <= b.pvc_s + 1e-9 and a.reduced and b.reduced
     w = vt.warnings(cs, 60)
-    assert any("made shorter" in t for t, _ in w)
+    assert any("shortened" in t for t, _ in w)
+    assert vt.rows(cs, str)[0][-1].startswith("SHORTENED to fit")
 
 
 def test_propose_follows_profile():
@@ -102,3 +103,21 @@ def test_road_report_tables(tmp_path):
     assert f"= {r.stations[i].cut_vol:.2f} m³" in " ".join(w)
     secs = rr.section_data(r, rd)
     assert len(secs) == len(r.stations) and secs[1].info[0] == ("Distance from last", "20.00 m")
+
+
+def test_office_minimum_length_and_spacing():
+    # 1.2: the designer's shortest curve (60 m) beats 0.6 V (18 m at 30 km/h) and K x A
+    c, = vt.build([[0, 100, 0], [100, 101, 0], [200, 103, 0]], 30, min_len=60)
+    assert c.length == pytest.approx(60) and not c.reduced
+    c, = vt.build([[0, 100, 0], [100, 101, 0], [200, 103, 0]], 30)
+    assert c.length == pytest.approx(18)                          # without it: 0.6 x 30 km/h (K x A = 6 x 1 = 6)
+    # points too close for 60 m curves are shortened and marked
+    cs = vt.build([[0, 100, 0], [40, 102, 0], [80, 101, 0], [200, 104, 0]], 30, min_len=60)
+    assert cs[0].length / 2 + cs[1].length / 2 <= 40 + 1e-6 and cs[0].reduced
+    # proposed points keep 60 m apart and 30 m from the ends
+    d = np.arange(0, 301.0, 1.0)
+    z = 100 + 3 * np.sin(d / 25)
+    p = vt.propose(d, z, min_gap=60, end_gap=30)
+    s = [q[0] for q in p]
+    assert all(b - a >= 60 - 1e-9 for a, b in zip(s[1:-1], s[2:-1])), s
+    assert s[1] >= 30 and s[-1] - s[-2] >= 30, s

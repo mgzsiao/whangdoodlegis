@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QDialog, QDia
 from ..core import activity, alignment as alm, crs as crsmod, earthworks as ew, measure as ms, road as rdm, system
 from ..core import vertical as vt
 from ..core.settings import config_dir
-from . import theme
+from . import road_parts as rp, theme
 from .export_widgets import CrsPicker, FolderPicker, FormatChecks
 from .pages_setup import ChoiceCard, clear_layout
 from .road_widgets import SectionView, TemplatePreview
@@ -185,13 +185,14 @@ class PlanPanel(QWidget):
     STEPS = {
         "pad": ["type", "draw", "height", "edges", "soil", "result"],
         "pile": ["type", "draw", "ref", "soil", "result"],
-        "road": ["type", "draw", "curves", "stations", "rise", "vcurves", "shape", "soil", "result"],
+        # 1.2: the road shape is asked part by part (guided steps), before the curves that depend on it
+        "road": ["type", "draw", "std", *rp.PART_STEPS, "curves", "stations", "rise", "vcurves", "soil", "result"],
     }
     TITLES = {"type": "What are you planning?", "draw": "Draw the area", "height": "How high should the ground be?",
               "edges": "What happens at the edges?", "ref": "Measure from what?", "soil": "Soil and trucks",
               "result": "Results", "stations": "How often should we check the ground?",
-              "rise": "How high should the road be?", "shape": "What does the road look like across?",
-              "curves": "Smooth the bends?", "vcurves": "Smooth the grade changes?"}
+              "rise": "How high should the road be?", "curves": "Curves: smooth the bends",
+              "vcurves": "Smooth the grade changes?", **rp.TITLES}
 
     def __init__(self, page):
         super().__init__()
@@ -233,10 +234,12 @@ class PlanPanel(QWidget):
         lay.addWidget(self.title)
         self.stack = QStackedWidget()
         self.pages = {}
+        self._make_shape_widgets()
         for key, fn in (("type", self._p_type), ("draw", self._p_draw), ("height", self._p_height),
-                        ("edges", self._p_edges), ("ref", self._p_ref), ("curves", self._p_curves),
-                        ("stations", self._p_stations),
-                        ("rise", self._p_rise), ("vcurves", self._p_vcurves), ("shape", self._p_shape), ("soil", self._p_soil),
+                        ("edges", self._p_edges), ("ref", self._p_ref), ("std", self._p_std),
+                        *((k, lambda l_, k_=k: self._p_part(k_, l_)) for k in rp.PART_STEPS),
+                        ("curves", self._p_curves), ("stations", self._p_stations),
+                        ("rise", self._p_rise), ("vcurves", self._p_vcurves), ("soil", self._p_soil),
                         ("result", self._p_result)):
             pw = QWidget()
             pl = QVBoxLayout(pw)
@@ -257,12 +260,16 @@ class PlanPanel(QWidget):
         foot.setContentsMargins(16, 8, 16, 10)
         self.back_btn = QPushButton("‹  Back")
         self.back_btn.clicked.connect(self.back)
+        self.change_btn = QPushButton("Change dimensions")
+        self.change_btn.setToolTip("Type your own values for this part of the road.")
+        self.change_btn.clicked.connect(self._toggle_change)
         self.next_btn = QPushButton("Next  ›")
         self.next_btn.setObjectName("Primary")
         self.next_btn.setMinimumWidth(170)
         self.next_btn.clicked.connect(self.next)
         foot.addWidget(self.back_btn)
         foot.addStretch(1)
+        foot.addWidget(self.change_btn)
         foot.addWidget(self.next_btn)
         outer.addLayout(foot)
         self._choose_type("pad")
@@ -424,20 +431,28 @@ class PlanPanel(QWidget):
 
     # ---- road pages
     TIGHT = (("gentle", "Gentle curves", 60.0, "for faster vehicles; needs more room"),
-             ("normal", "Normal curves", 30.0, "the DPWH minimum for farm-to-market roads"),
-             ("tight", "Tight curves", 15.0, "slow traffic, mountain roads"),
+             ("normal", "Curves at the smallest radius", -1.0, "as tight as the smallest radius below allows"),
              ("none", "No curves", 0.0, "keep the sharp bends as drawn"))
 
     def _p_curves(self, lay):
         lay.addWidget(label("At each bend the road can turn along a smooth curve (an arc of a circle) instead of a "
                             "sharp corner. A bigger radius is a gentler curve.", "", wrap=True))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Smallest curve radius"))
+        row.addWidget(self.r_min_radius)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.min_r_note = label("", "Hint", wrap=True)
+        lay.addWidget(self.min_r_note)
+        lay.addWidget(explain(rp.WHY_RADIUS))
         self.tgroup = QButtonGroup(self)
         for key, title, r, text in self.TIGHT:
-            rb = radio_block(self.tgroup, key, f"{title}" + (f" (radius {r:g} m)" if r else ""), text, lay)
+            rb = radio_block(self.tgroup, key, f"{title}" + (f" (radius {r:g} m)" if r > 0 else ""), text, lay)
             rb.setProperty("r", r)
             if key == "normal":
                 rb.setChecked(True)
             rb.toggled.connect(self._tight_changed)
+        self.r_min_radius.valueChanged.connect(self._min_radius_changed)
         lay.addWidget(label("Each bend", "H2"))
         self.curve_box = QVBoxLayout()
         self.curve_box.setSpacing(4)
@@ -450,7 +465,29 @@ class PlanPanel(QWidget):
 
     def _tight_r(self) -> float:
         b = self.tgroup.checkedButton()
-        return float(b.property("r")) if b else 30.0
+        r = float(b.property("r")) if b else -1.0
+        return max(self.r_min_radius.value(), 5.0) if r < 0 else r
+
+    def _min_radius_changed(self, _v):
+        self._min_radius_note()
+        b = self.tgroup.checkedButton() if hasattr(self, "tgroup") else None
+        if b is not None and float(b.property("r")) < 0:
+            self._tight_changed(True)
+        elif hasattr(self, "curve_rows"):
+            self._curves_changed()
+
+    def _min_radius_note(self):
+        std = rdm.STANDARDS.get(self.r_std.currentData() or "")
+        v = self.r_min_radius.value()
+        if std and v < std["min_radius"] - 1e-9:
+            self.min_r_note.setText(f"\u26A0 Smaller than the DPWH {std['min_radius']:g} m for this road: bends "
+                                    f"under {std['min_radius']:g} m are marked in the report.")
+            self.min_r_note.setObjectName("Warn")
+        else:
+            self.min_r_note.setText(f"DPWH: {std['min_radius']:g} m for this road (D.O. 112 s. 2019)." if std else
+                                    "Your own value (DPWH: 30 m, 50 m for Tourism roads).")
+            self.min_r_note.setObjectName("Hint")
+        theme.repolish(self.min_r_note)
 
     def _tight_changed(self, on):
         if not on:
@@ -512,18 +549,23 @@ class PlanPanel(QWidget):
             al = alm.build(self.page.pts, self.curve_radii())
         except ValueError:
             return
-        std = rdm.STANDARDS.get(self.r_std.currentData()) if hasattr(self, "r_std") else None
+        rmin = self.r_min_radius.value()
         by_v = {c.vertex: c for c in al.curves}
         for vtx, cb, sp, st in self.curve_rows:
             c = by_v.get(vtx)
             if not cb.isChecked() or c is None:
                 st.setText("Sharp bend.")
                 st.setObjectName("Hint")
+            elif c.reduced and rmin and c.radius < rmin - 1e-6:
+                st.setText(f"\u26A0 Only a {c.radius:.0f} m curve fits here (the straights next to it are short), "
+                           f"less than your smallest radius of {rmin:g} m. Move the bend point on the map so a "
+                           f"{rmin:g} m curve fits, or accept it: the report marks this bend.")
+                st.setObjectName("Warn")
             elif c.reduced:
                 st.setText(f"\u26A0 Made smaller to fit: radius {c.radius:.0f} m (the straights next to it are short).")
                 st.setObjectName("Warn")
-            elif std and c.radius < std["min_radius"]:
-                st.setText(f"\u26A0 Tighter than the DPWH minimum of {std['min_radius']:g} m.")
+            elif rmin and c.radius < rmin - 1e-6:
+                st.setText(f"\u26A0 Tighter than your smallest radius of {rmin:g} m: the report marks this bend.")
                 st.setObjectName("Warn")
             elif c.radius < rdm.VERY_TIGHT:
                 st.setText("\u26A0 Very tight: long trucks may not get around.")
@@ -647,6 +689,15 @@ class PlanPanel(QWidget):
         lay.addLayout(row)
         self.vc_speed_note = label("", "Hint", wrap=True)
         lay.addWidget(self.vc_speed_note)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Shortest vertical curve (PVC to PVT)"))
+        self.vc_min = spin(0, 500, 60, " m", 0, 5, 110)
+        self.vc_min.setSpecialValueText("from the speed only")
+        self.vc_min.valueChanged.connect(lambda _v: self._changed())
+        row.addWidget(self.vc_min)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(explain(rp.WHY_VC))
         lay.addWidget(label("Reference: how long a curve must be (AASHTO 2018)", "H2"))
         self.k_table = QTableWidget(len(vt.K_TABLE), 5)
         self.k_table.setHorizontalHeaderLabels(["Speed", "Sight dist.", "K crest", "K sag", "Min. L"])
@@ -705,7 +756,7 @@ class PlanPanel(QWidget):
                 self.vc_speed.blockSignals(False)
         self.vc_speed_note.setText(
             (f"Chosen road standard: {std['speed']}." if std else "No road standard chosen: 30 km/h suits most "
-             "barangay and farm-to-market roads.") + " Choose the speed vehicles will really drive.")
+             "barangay roads and roads with under 400 vehicles a day.") + " Choose the speed vehicles will really drive.")
 
     def _fill_k_table(self):
         sp = self.vc_speed.currentData()
@@ -727,7 +778,7 @@ class PlanPanel(QWidget):
 
     def _vc_changed(self, *_):
         on = self.vc_yes.isChecked()
-        for w_ in (self.vc_speed, self.pvi_table, self.k_table):
+        for w_ in (self.vc_speed, self.pvi_table, self.k_table, self.vc_min):
             w_.setEnabled(on)
         self._changed()
 
@@ -847,91 +898,62 @@ class PlanPanel(QWidget):
             out.append([st, float(b)])
         return out
 
-    def _p_shape(self, lay):
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Road standard"))
+    def _make_shape_widgets(self):
+        """The road shape inputs, shared by the guided part steps (std, carriage, shoulders, layers, ditch, slopes)."""
         self.r_std = QComboBox()
-        self.r_std.addItem("My own values", "")
         for k, v in rdm.STANDARDS.items():
             self.r_std.addItem(v["label"], k)
+        self.r_std.addItem("My own values", "")
         self.r_std.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.r_std.setMinimumContentsLength(16)
-        self.r_std.currentIndexChanged.connect(self._std_changed)
-        row.addWidget(self.r_std, 1)
-        lay.addLayout(row)
         self.std_note = label("", "Hint", wrap=True)
-        lay.addWidget(self.std_note)
-        self.preview = TemplatePreview()
-        lay.addWidget(self.preview)
-        g = QGridLayout()
-        g.setVerticalSpacing(6)
         self.r_width = spin(1, 40, 5.0, " m", 2, 0.1, 110)
         self.r_crown = spin(0, 10, 1.5, " %", 1, 0.5, 110)
-        g.addWidget(QLabel("Road width"), 0, 0)
-        g.addWidget(self.r_width, 0, 1)
-        g.addWidget(label("the part vehicles drive on, edge to edge", "Hint", wrap=True), 0, 2)
-        g.addWidget(QLabel("Higher in the middle"), 1, 0)
-        g.addWidget(self.r_crown, 1, 1)
-        g.addWidget(label("crown: falls this much toward each edge so rain runs off", "Hint", wrap=True), 1, 2)
         self.r_sh = QCheckBox("Shoulders")
         self.r_sh.setChecked(True)
         self.r_sh_w = spin(0.1, 10, 1.5, " m", 2, 0.1, 110)
         self.r_sh_p = spin(0, 15, 3.0, " %", 1, 0.5, 110)
-        g.addWidget(self.r_sh, 2, 0)
-        g.addWidget(self.r_sh_w, 2, 1)
-        g.addWidget(label("each side", "Hint"), 2, 2)
-        g.addWidget(QLabel("   sloping"), 3, 0)
-        g.addWidget(self.r_sh_p, 3, 1)
-        g.addWidget(label("away from the road", "Hint"), 3, 2)
         self.r_pccp = spin(0, 600, 200, " mm", 0, 10, 110)
         self.r_sub = spin(0, 600, 200, " mm", 0, 10, 110)
-        g.addWidget(QLabel("Concrete (PCCP)"), 4, 0)
-        g.addWidget(self.r_pccp, 4, 1)
-        g.addWidget(label("the slab vehicles drive on", "Hint", wrap=True), 4, 2)
-        g.addWidget(QLabel("Aggregate subbase"), 5, 0)
-        g.addWidget(self.r_sub, 5, 1)
-        g.addWidget(label("under the concrete and the shoulders; cut and fill stop at its bottom", "Hint",
-                          wrap=True), 5, 2)
         self.r_ditch = QCheckBox("Road side ditches where the road is in cut")
         self.r_ditch.setChecked(True)
-        g.addWidget(self.r_ditch, 6, 0, 1, 3)
         self.r_ditch_d = spin(0.1, 3, 0.5, " m", 2, 0.1, 110)
         self.r_ditch_w = spin(0, 5, 0.0, " m", 2, 0.1, 110)
         self.r_ditch_in = spin(0.5, 10, 2.0, "  : 1", 1, 0.25, 110)
-        g.addWidget(QLabel("   depth"), 7, 0)
-        g.addWidget(self.r_ditch_d, 7, 1)
-        g.addWidget(label("below the shoulder edge", "Hint"), 7, 2)
-        g.addWidget(QLabel("   bottom width"), 8, 0)
-        g.addWidget(self.r_ditch_w, 8, 1)
-        g.addWidget(label("0 = V-shaped (DPWH)", "Hint", wrap=True), 8, 2)
-        g.addWidget(QLabel("   road side"), 9, 0)
-        g.addWidget(self.r_ditch_in, 9, 1)
-        g.addWidget(label("out : down", "Hint", wrap=True), 9, 2)
         self.r_ditch_toe = QCheckBox("Also a ditch at the toe of the fill")
         self.r_ditch_toe.setChecked(True)
-        g.addWidget(self.r_ditch_toe, 10, 0, 1, 3)
         self.r_ditch_out = spin(0.5, 10, 1.5, "  : 1", 1, 0.25, 110)
-        g.addWidget(QLabel("   its outer side"), 11, 0)
-        g.addWidget(self.r_ditch_out, 11, 1)
-        g.addWidget(label("out : up", "Hint", wrap=True), 11, 2)
         self.r_soil = QComboBox()
         for k, (name, _c, _f, _d) in ew.SOILS.items():
             self.r_soil.addItem(name, k)
         self.r_soil.setCurrentIndex(self.r_soil.findData("custom"))
         self.r_cut = spin(0.2, 10, 1.5, "  : 1", 1, 0.25, 110)
         self.r_fill = spin(0.2, 10, 2.0, "  : 1", 1, 0.25, 110)
-        g.addWidget(QLabel("Soil for the sides"), 12, 0)
-        g.addWidget(self.r_soil, 12, 1, 1, 2)
-        g.addWidget(QLabel("Cut sides"), 13, 0)
-        g.addWidget(self.r_cut, 13, 1)
-        g.addWidget(label("out : up", "Hint"), 13, 2)
-        g.addWidget(QLabel("Filled sides"), 14, 0)
-        g.addWidget(self.r_fill, 14, 1)
-        g.addWidget(label("out : up", "Hint"), 14, 2)
-        g.setColumnStretch(2, 1)
-        lay.addLayout(g)
-        lay.addWidget(explain("Starting values are DPWH's (under 200 vehicles a day). Choose a road standard above "
-                              "to fill in its values; every value can still be changed."))
+        # the smallest curve radius (curves step) follows the standard: 30 m, 50 m for Tourism roads
+        self.r_min_radius = spin(0, 500, 30, " m", 0, 5, 110)
+        self.r_min_radius.setSpecialValueText("no check")
+        self.part_rows = {
+            "carriage": [("Width, both lanes", self.r_width, "width", 1, " m", "the part vehicles drive on, edge to edge"),
+                         ("Cross slope from the centre", self.r_crown, "crown_pct", 1, "%",
+                          "falls this much toward each edge so rain runs off")],
+            "shoulders": [("", self.r_sh, "shoulders", 1, "", ""),
+                          ("Width, each side", self.r_sh_w, "shoulder_w", 1, " m", ""),
+                          ("Cross slope", self.r_sh_p, "shoulder_pct", 1, "%", "away from the road")],
+            "layers": [("Concrete (PCCP)", self.r_pccp, "pccp_t", 1000, " mm", "the slab vehicles drive on"),
+                       ("Aggregate subbase", self.r_sub, "subbase_t", 1000, " mm",
+                        "under the concrete and the shoulders; cut and fill stop at its bottom")],
+            "ditch": [("", self.r_ditch, "ditch", 1, "", ""),
+                      ("Depth", self.r_ditch_d, "ditch_d", 1, " m", "below the shoulder edge"),
+                      ("Bottom width", self.r_ditch_w, "ditch_w", 1, " m", "0 = V-shaped (DPWH)"),
+                      ("Road side", self.r_ditch_in, "ditch_in", 1, " : 1", "out : down, from the shoulder edge"),
+                      ("", self.r_ditch_toe, "ditch_toe", 1, "", ""),
+                      ("Outer side of the toe ditch", self.r_ditch_out, "ditch_out", 1, " : 1", "out : up")],
+            "slopes": [("Soil for the sides", self.r_soil, "soil", 1, "", "sets both slopes; or type your own"),
+                       ("Cut sides", self.r_cut, "cut_ratio", 1, " : 1", "out : up"),
+                       ("Fill sides", self.r_fill, "fill_ratio", 1, " : 1", "out : down")],
+        }
+        self.part_forms, self.part_prev, self.part_src, self.part_warn = {}, {}, {}, {}
+        self.r_std.currentIndexChanged.connect(self._std_changed)
         for w_ in (self.r_width, self.r_crown, self.r_sh_w, self.r_sh_p, self.r_ditch_w, self.r_ditch_d,
                    self.r_ditch_in, self.r_ditch_out, self.r_pccp, self.r_sub):
             w_.valueChanged.connect(self._shape_changed)
@@ -940,6 +962,48 @@ class PlanPanel(QWidget):
         self.r_soil.currentIndexChanged.connect(self._r_soil_changed)
         self.r_cut.valueChanged.connect(self._r_ratio_edited)
         self.r_fill.valueChanged.connect(self._r_ratio_edited)
+
+    def _p_std(self, lay):
+        lay.addWidget(label(rp.EXPLAIN["std"], "", wrap=True))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Road standard"))
+        row.addWidget(self.r_std, 1)
+        lay.addLayout(row)
+        lay.addWidget(self.std_note)
+        self.preview = TemplatePreview()
+        lay.addWidget(self.preview)
+        lay.addWidget(explain("More than 400 vehicles a day? D.O. 112 does not cover that: choose “My own values” "
+                              "and use your office's standard for bigger roads."))
+
+    def _p_part(self, key, lay):
+        prev = TemplatePreview()
+        prev.highlight = key
+        form = rp.PartForm(self.part_rows[key])
+        page, src, warn = rp.part_page(key, prev, form)
+        lay.addWidget(page)
+        self.part_forms[key], self.part_prev[key], self.part_src[key], self.part_warn[key] = form, prev, src, warn
+
+    def _toggle_change(self):
+        f = self.part_forms.get(self.step())
+        if f is None:
+            return
+        f.set_editing(not f.editing)
+        self.change_btn.setText("Done changing" if f.editing else "Change dimensions")
+        self._shape_changed()
+
+    def _parts_refresh(self):
+        if not self.part_forms:
+            return
+        rd = self.road_design()
+        std_key = self.r_std.currentData() or ""
+        ref, name = rp.reference(std_key)
+        for k, f in self.part_forms.items():
+            f.refresh(ref, name)
+            self.part_prev[k].set_design(rd)
+            self.part_src[k].setText(rp.source_text(k, std_key))
+            w = rp.warnings(k, rd, std_key)
+            self.part_warn[k].setText("\n".join("⚠ " + t for t in w))
+            self.part_warn[k].setVisible(bool(w))
 
     def _std_changed(self, _i):
         k = self.r_std.currentData()
@@ -962,6 +1026,14 @@ class PlanPanel(QWidget):
             self.r_soil.blockSignals(False)
             self.r_cut.setValue(st["cut_ratio"])
             self.r_fill.setValue(st["fill_ratio"])
+            self.r_min_radius.setValue(st["min_radius"])
+        self._std_note()
+        self._shape_changed()
+
+    def _std_note(self):
+        """The description of the chosen standard (does not change any value)."""
+        st = rdm.STANDARDS.get(self.r_std.currentData())
+        if st:
             self.std_note.setText(
                 f"From {rdm.DPWH_SOURCE}: width {st['width']:g} m, concrete (PCCP) at least {st['pccp_t'] * 1000:.0f} mm, "
                 f"shoulders {st['shoulder_w']:g} m gravel, cross slope 1.5% (shoulders 3%), curves at least "
@@ -970,8 +1042,8 @@ class PlanPanel(QWidget):
                 "V-shaped road side ditch (2 : 1 road side, 1.5 : 1 outer side; 0.50 m deep is our suggestion). "
                 "You can still change any value; the app then warns you where the plan is outside the standard.")
         else:
-            self.std_note.setText("Type the values for your road. Choose a DPWH standard above to fill them in.")
-        self._shape_changed()
+            self.std_note.setText("Your own values: the next steps keep the values you have now (the DPWH values "
+                                  "for under 200 vehicles a day to start with); change any of them there.")
 
     def _shape_changed(self, *_):
         self.r_sh_w.setEnabled(self.r_sh.isChecked())
@@ -980,7 +1052,10 @@ class PlanPanel(QWidget):
         for w_ in (self.r_ditch_w, self.r_ditch_d, self.r_ditch_in, self.r_ditch_toe):
             w_.setEnabled(on)
         self.r_ditch_out.setEnabled(on and self.r_ditch_toe.isChecked())
+        if not hasattr(self, "pgroup"):            # still building the pages
+            return
         self.preview.set_design(self.road_design())
+        self._parts_refresh()
         self._changed()
 
     def _r_soil_changed(self, _i):
@@ -1018,7 +1093,7 @@ class PlanPanel(QWidget):
             subbase_t=self.r_sub.value() / 1000, soil=self.r_soil.currentData(), cut_ratio=self.r_cut.value(),
             fill_ratio=self.r_fill.value(), swell_pct=self.swell.value(), shrink_pct=self.shrink.value(),
             truck_m3=self.truck.value(), radii=self.curve_radii(), standard=self.r_std.currentData() or "",
-            min_radius=rdm.STANDARDS.get(self.r_std.currentData() or "", {}).get("min_radius", 0.0),
+            min_radius=self.r_min_radius.value(), vc_min=self.vc_min.value(),
             vcurves=self.vc_yes.isChecked(), speed=int(self.vc_speed.currentData() or 30),
             pvis=[list(q) for q in self._pvis] if not self._pvis_auto else [], pvis_auto=self._pvis_auto)
 
@@ -1118,10 +1193,16 @@ class PlanPanel(QWidget):
         nxt = self.steps()[self.idx + 1] if not last else ""
         short = {"draw": "Draw the road line" if self.kind == "road" else "Draw the area", "height": "Height",
                  "edges": "Edges", "ref": "Measure from", "soil": "Soil and trucks", "stations": "Stations",
-                 "rise": "Road height", "shape": "Road shape", "curves": "Curves",
-                 "vcurves": "Grade changes"}
-        self.next_btn.setText(("See the results" if nxt == "result" else f"Next: {short.get(nxt, '')}") + "  ›"
-                              if nxt else "")
+                 "rise": "Road height", "curves": "Curves", "vcurves": "Grade changes", **rp.SHORT}
+        guided = key in rp.PART_STEPS or key == "std"
+        self.next_btn.setText(("See the results" if nxt == "result" else "OK, next" if guided else
+                               f"Next: {short.get(nxt, '')}") + "  ›" if nxt else "")
+        self.next_btn.setToolTip(f"Next: {short.get(nxt, '')}" if nxt and nxt != "result" else "")
+        form = self.part_forms.get(key)
+        if form is not None:
+            form.set_editing(False)                 # suggested values first: OK, next  or  Change dimensions
+        self.change_btn.setVisible(form is not None)
+        self.change_btn.setText("Change dimensions")
         if key == "draw":
             self._sync_src()
             self._shape_text()
@@ -1132,8 +1213,11 @@ class PlanPanel(QWidget):
                 "corner to close the outline.")
         if key == "curves":
             self._build_curve_rows()
-        if key == "shape" and not self.std_note.text():
+            self._min_radius_note()
+        if key == "std" and not self.std_note.text():
             self._std_changed(0)
+        if guided:
+            self._parts_refresh()
         if key == "stations":
             self._station_text()
         if key == "rise":
@@ -1141,7 +1225,7 @@ class PlanPanel(QWidget):
         if key == "vcurves":
             self._vc_speed_default()
             self._fill_k_table()
-        if key == "shape":
+        if key == "std":
             self.preview.set_design(self.road_design())
         if key == "height":
             self._ground_text()
@@ -1208,11 +1292,22 @@ class PlanPanel(QWidget):
         if "vcurves" in steps:
             lines.append(f"\u2714 Vertical curves for {self.vc_speed.currentData()} km/h"
                          if self.vc_yes.isChecked() else "\u2714 No vertical curves")
-        if "shape" in steps:
-            std = rdm.STANDARDS.get(self.r_std.currentData() or "")
-            lines.append(f"\u2714 Road {self.r_width.value():g} m" + (" (DPWH)" if std else "") +
-                         (f" + shoulders {self.r_sh_w.value():g} m" if self.r_sh.isChecked() else "") +
-                         (", ditches" if self.r_ditch.isChecked() else ""))
+        if "std" in steps:
+            lines.append(f"\u2714 Standard: {self.r_std.currentText()}")
+        if "carriage" in steps:
+            lines.append(f"\u2714 Carriageway {self.r_width.value():.2f} m, {self.r_crown.value():g}% each way")
+        if "shoulders" in steps:
+            lines.append(f"\u2714 Shoulders {self.r_sh_w.value():.2f} m at {self.r_sh_p.value():g}%"
+                         if self.r_sh.isChecked() else "\u2714 No shoulders")
+        if "layers" in steps:
+            lines.append(f"\u2714 PCCP {self.r_pccp.value():.0f} mm on subbase {self.r_sub.value():.0f} mm")
+        if "ditch" in steps:
+            lines.append((f"\u2714 Ditches {'V-shaped' if self.r_ditch_w.value() <= 0 else 'flat-bottomed'}, "
+                          f"{self.r_ditch_d.value():.2f} m deep" + (", also at the toe of the fill"
+                                                                    if self.r_ditch_toe.isChecked() else ""))
+                         if self.r_ditch.isChecked() else "\u2714 No road side ditches")
+        if "slopes" in steps:
+            lines.append(f"\u2714 Sides: cut {self.r_cut.value():g} : 1, fill {self.r_fill.value():g} : 1")
         if "soil" in steps:
             lines.append(f"✔ Soil: loosens {self.swell.value():.0f}%"
                          + (f", packing {self.shrink.value():.0f}%" if self.kind != "pile" else ""))
@@ -1760,6 +1855,11 @@ class PlanPanel(QWidget):
         self.r_soil.setCurrentIndex(max(0, self.r_soil.findData(rd.soil)))
         self.r_cut.setValue(rd.cut_ratio)
         self.r_fill.setValue(rd.fill_ratio)
+        self.r_min_radius.blockSignals(True)
+        self.r_min_radius.setValue(rd.min_radius)
+        self.r_min_radius.blockSignals(False)
+        self.vc_min.setValue(rd.vc_min)
+        self._std_note()
         self.swell.setValue(rd.swell_pct)
         self.shrink.setValue(rd.shrink_pct)
         self.truck.setValue(rd.truck_m3)

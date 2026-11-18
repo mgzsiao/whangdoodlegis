@@ -103,6 +103,28 @@ m._finish()
 assert P.next_btn.isEnabled()
 shot("51_road_line")
 P.next()
+# 1.2 guided road steps: standard, then one part of the road per step
+assert P.step() == "std" and P.r_std.currentData() == "fmr_low"
+P.r_std.setCurrentIndex(P.r_std.findData("fmr"))
+assert abs(P.r_width.value() - 6.1) < 1e-9 and abs(P.r_min_radius.value() - 30) < 1e-9
+shot("51a_road_standard")
+for key in ("carriage", "shoulders", "layers", "ditch", "slopes"):
+    P.next()
+    assert P.step() == key and P.change_btn.isVisible() and P.next_btn.text().startswith("OK, next")
+    form = P.part_forms[key]
+    assert not form.editing and all(m.text() in ("", "standard") for m in form.marks), [m.text() for m in form.marks]
+    if key == "layers":                       # Change dimensions: the values become editable and are marked
+        P._toggle_change()
+        assert form.editing and not P.r_pccp.isHidden() and P.change_btn.text() == "Done changing"
+        P.r_pccp.setValue(180)
+        assert "your value" in form.marks[0].text() and "200 mm" in form.marks[0].text(), form.marks[0].text()
+        assert "Thinner than the DPWH minimum" in P.part_warn["layers"].text()
+        shot("54b_road_layers_changed")
+        P.r_pccp.setValue(200)
+        P._toggle_change()
+        assert not form.editing and P.r_pccp.isHidden() and form.shown[0].text() == "200 mm"
+    shot(f"54_road_{key}")
+P.next()
 assert P.step() == "curves" and P.curve_rows, "one bend expected"
 pump()
 shot("51b_road_curves")
@@ -119,14 +141,10 @@ r_ = P.takeoff
 print("vertical:", [(round(q[0], 1), round(q[1], 2)) for q in r_.pvis],
       [(c.kind, round(c.length, 1), round(c.k, 1)) for c in r_.vcurves])
 assert len(r_.pvis) >= 2 and P.pvi_table.rowCount() == len(r_.pvis)
+assert P.vc_min.value() == 60 and all(c.length >= 60 - 1e-6 or c.reduced or c.length == 0 for c in r_.vcurves)
 shot("53b_road_vertical_curves")
 P.next()
-P.r_std.setCurrentIndex(P.r_std.findData("fmr"))
-assert abs(P.r_width.value() - 6.1) < 1e-9
-P.r_ditch.setChecked(True)
-wait(lambda: idle())
-shot("54_road_shape")
-P.next()
+assert P.step() == "soil"
 P.next()
 wait(lambda: idle() and P.takeoff is not None)
 P.select_station(4)

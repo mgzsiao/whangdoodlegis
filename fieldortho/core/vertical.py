@@ -10,7 +10,9 @@ Minimum curve lengths come from the design speed: L = K x |A|, with the K values
 "A Policy on Geometric Design of Highways and Streets" (Green Book), 7th ed. 2018: Table 3-35 (crest,
 stopping sight distance, driver eye 1.08 m, object 0.60 m) and Table 3-37 (sag, headlight sight distance),
 and a minimum length of 0.6 x design speed (km/h) in metres (Green Book 3.4.6). Values rounded as
-printed in the Green Book for design.
+printed in the Green Book for design. Since 1.2 the designer also sets a shortest curve (office rule,
+60 m by default): L = max(K x |A|, 0.6 V, shortest). A curve that does not fit between its neighbours is
+shortened, warned about and marked in the report.
 """
 from __future__ import annotations
 
@@ -104,9 +106,12 @@ class VCurve:
         return abs(self.a) >= MIN_A and self.k < self.k_min - 1e-6
 
 
-def propose(d: np.ndarray, z: np.ndarray, tol: float = 0.10, min_gap: float = 20.0) -> list[list[float]]:
+def propose(d: np.ndarray, z: np.ndarray, tol: float = 0.10, min_gap: float = 20.0,
+            end_gap: float | None = None) -> list[list[float]]:
     """PVIs [[station, elevation, 0], ...] that follow a road height line within `tol` metres, at least
-    `min_gap` apart (Douglas-Peucker on the side view)."""
+    `min_gap` apart and at least `end_gap` (default min_gap) from the start and the end, so curves of
+    min_gap length fit (Douglas-Peucker on the side view)."""
+    end_gap = min_gap if end_gap is None else end_gap
     d = np.asarray(d, float)
     z = np.asarray(z, float)
     keep = {0, len(d) - 1}
@@ -125,12 +130,15 @@ def propose(d: np.ndarray, z: np.ndarray, tol: float = 0.10, min_gap: float = 20
             split(m, j)
     split(0, len(d) - 1)
     idx = sorted(keep)
-    # merge points closer than min_gap (keep the one where the grade changes most)
+    # merge points closer than min_gap (end_gap next to the start / end; keep the one where the grade changes most)
     while len(idx) > 2:
         gaps = np.diff(d[idx])
-        k = int(np.argmin(gaps))
-        if gaps[k] >= min_gap:
+        need = np.full(len(gaps), float(min_gap))
+        need[0] = need[-1] = end_gap
+        short = gaps < need - 1e-9
+        if not short.any():
             break
+        k = int(np.argmin(np.where(short, gaps - need, np.inf)))
         if k == 0:
             del idx[1]
         elif k == len(idx) - 2:
@@ -143,8 +151,9 @@ def propose(d: np.ndarray, z: np.ndarray, tol: float = 0.10, min_gap: float = 20
     return [[float(d[i]), round(float(z[i]), 3), 0.0] for i in idx]
 
 
-def build(pvis: list, speed: int, end_s: float | None = None) -> list[VCurve]:
-    """Curves at the inner PVIs. pvis: [[station, elevation, length (0 = from design speed)], ...]."""
+def build(pvis: list, speed: int, end_s: float | None = None, min_len: float = 0.0) -> list[VCurve]:
+    """Curves at the inner PVIs. pvis: [[station, elevation, length (0 = from design speed)], ...].
+    min_len: the designer's shortest curve (PVC to PVT), on top of the speed's K and 0.6 V."""
     p = sorted([float(r[0]), float(r[1]), float(r[2]) if len(r) > 2 and r[2] else 0.0] for r in pvis)
     if len(p) < 2:
         raise ValueError("At least a start and an end point are needed for the road heights.")
@@ -152,7 +161,7 @@ def build(pvis: list, speed: int, end_s: float | None = None) -> list[VCurve]:
         if b[0] - a[0] < 1.0:
             raise ValueError(f"Two grade change points are too close (stations {a[0]:.1f} and {b[0]:.1f} m).")
     kc, ks = k_values(speed)
-    lmin = min_length(speed)
+    lmin = max(min_length(speed), float(min_len or 0.0))
     out = []
     for i in range(1, len(p) - 1):
         (s0, z0, _), (s1, z1, typed_l), (s2, z2, _) = p[i - 1], p[i], p[i + 1]
@@ -211,8 +220,9 @@ def warnings(curves: list[VCurve], speed: int) -> list[tuple[str, str]]:
     out = []
     for c in curves:
         if c.reduced:
-            out.append((f"Vertical curve {c.n} made shorter", f"At {c.pvi_s:.0f} m there was room for only "
-                        f"{c.length:.0f} m of curve (asked {c.length_asked:.0f} m): the grades next to it are short."))
+            out.append((f"Vertical curve {c.n} shortened", f"At {c.pvi_s:.0f} m there was room for only "
+                        f"{c.length:.0f} m of curve (wanted {c.length_asked:.0f} m): the grade change points next to it "
+                        "are too close. Move them further apart, or accept it; the report marks this curve."))
         if c.short:
             out.append((f"Vertical curve {c.n} too short for {speed} km/h",
                         f"{c.kind.title()} curve K = {c.k:.1f}; {speed} km/h needs K at least {c.k_min:g} "
@@ -223,7 +233,17 @@ def warnings(curves: list[VCurve], speed: int) -> list[tuple[str, str]]:
 
 ROW_HEADER = ("Curve", "Type", "PVI station", "PVI elevation (m)", "Grade in g1 (%)", "Grade out g2 (%)", "A (%)",
               "Length L (m)", "K (m/%)", "K needed", "PVC station", "PVC elevation (m)", "PVT station",
-              "PVT elevation (m)", "Middle offset e (m)", "High / low point")
+              "PVT elevation (m)", "Middle offset e (m)", "High / low point", "Note")
+
+
+def note(c: VCurve) -> str:
+    """Why a curve is not as long as asked / needed (shown in the report)."""
+    parts = []
+    if c.reduced:
+        parts.append(f"SHORTENED to fit (wanted {c.length_asked:.0f} m)")
+    if c.short:
+        parts.append(f"K below {c.k_min:g} needed")
+    return "; ".join(parts) or "-"
 
 
 def rows(curves: list[VCurve], label) -> list[tuple]:
@@ -235,5 +255,5 @@ def rows(curves: list[VCurve], label) -> list[tuple]:
                     label(c.pvi_s), round(c.pvi_z, 3), round(c.g1, 3), round(c.g2, 3), round(c.a, 3),
                     round(c.length, 2), round(c.k, 2) if math.isfinite(c.k) else "-", c.k_min,
                     label(c.pvc_s), round(c.pvc_z, 3), label(c.pvt_s), round(c.pvt_z, 3),
-                    round(c.middle_offset, 3), hl))
+                    round(c.middle_offset, 3), hl, note(c)))
     return out

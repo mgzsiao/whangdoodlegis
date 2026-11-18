@@ -28,10 +28,61 @@ class TemplatePreview(QWidget):
         self.setMinimumHeight(150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.rd = None
+        self.highlight = ""         # guided steps: carriage | shoulders | layers | ditch | slopes (drawn in amber)
 
     def set_design(self, rd):
         self.rd = rd
         self.update()
+
+    def _highlight(self, p, P, rd, pts, zh, ut, zt):
+        """The part the current guided step is about, in amber."""
+        from ..core import road as rdm
+        hl = self.highlight
+        if not hl:
+            return
+        p.setPen(QPen(QColor(theme.HIGHLIGHT), 4.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        w2, half = rd.width / 2, rd.half
+
+        def surf(a, b):
+            uu = np.linspace(a, b, 16)
+            zz = rdm.template(np.abs(uu), 0.0, rd, False)
+            path = QPainterPath(P(uu[0], zz[0]))
+            for x, z in zip(uu[1:], zz[1:]):
+                path.lineTo(P(x, z))
+            p.drawPath(path)
+        if hl == "carriage":
+            surf(-w2, w2)
+        elif hl == "shoulders" and rd.shoulders:
+            surf(-half, -w2)
+            surf(w2, half)
+        elif hl == "layers" and rd.pavement_t > 0:
+            uu = np.linspace(-half, half, 40)
+            zz = rdm.template(np.abs(uu), 0.0, rd, True)
+            path = QPainterPath(P(uu[0], zz[0]))
+            for x, z in zip(uu[1:], zz[1:]):
+                path.lineTo(P(x, z))
+            p.drawPath(path)                       # the bottom of the subbase: where cut and fill stop
+        elif hl == "ditch" and rd.ditch:
+            u1 = half + rd.ditch_in * rd.ditch_d
+            path = QPainterPath(P(half, zh))
+            path.lineTo(P(u1, zh - rd.ditch_d))
+            path.lineTo(P(u1 + rd.ditch_w, zh - rd.ditch_d))
+            path.lineTo(P(u1 + rd.ditch_w + rd.cut_ratio * rd.ditch_d, zh))
+            p.drawPath(path)
+            if rd.ditch_toe:
+                a1 = ut - rd.ditch_in * rd.ditch_d
+                a2 = a1 - rd.ditch_w
+                path = QPainterPath(P(ut, zt))
+                path.lineTo(P(a1, zt - rd.ditch_d))
+                path.lineTo(P(a2, zt - rd.ditch_d))
+                path.lineTo(P(a2 - rd.ditch_out * rd.ditch_d, zt))
+                p.drawPath(path)
+        elif hl == "slopes":
+            p.drawLine(P(-half, zh), P(ut, zt))
+            u0 = (half + rd.ditch_in * rd.ditch_d + rd.ditch_w) if rd.ditch else half
+            z0 = zh - rd.ditch_d if rd.ditch else zh
+            p.drawLine(P(u0, z0), P(u0 + 1.2 * rd.cut_ratio, z0 + 1.2))
 
     def paintEvent(self, _e):
         p = QPainter(self)
@@ -99,6 +150,7 @@ class TemplatePreview(QWidget):
             path.lineTo(P(half + 1.2 * rd.cut_ratio, zh + 1.2))
         p.setBrush(Qt.NoBrush)
         p.drawPath(path)
+        self._highlight(p, P, rd, pts, zh, ut, zt)
         f = QFont(self.font().family(), 8)
         p.setFont(f)
         p.setPen(QColor(theme.INK))

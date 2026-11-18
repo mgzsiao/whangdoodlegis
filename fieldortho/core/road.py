@@ -93,11 +93,13 @@ class RoadDesign:
     truck_m3: float = 0.0
     radii: list = field(default_factory=list)        # curve radius at each bend (0 = sharp bend)
     standard: str = ""                               # "" (own values) or a key of STANDARDS
-    min_radius: float = 0.0                          # for the "too tight" warning (0 = none)
+    min_radius: float = 30.0                         # smallest curve radius: tighter curves are warned
+                                                     # about and marked (0 = no check; pre-1.2 plans)
     vcurves: bool = False                            # straight grades between PVIs + parabolic vertical curves
     speed: int = 30                                  # design speed (km/h) for the vertical curve lengths
     pvis: list = field(default_factory=list)         # [[station, elevation, length (0 = from speed)], ...]
     pvis_auto: bool = True                           # PVIs proposed by the app (again at every change)
+    vc_min: float = 60.0                             # shortest vertical curve, PVC to PVT (office rule)
 
     @property
     def half(self) -> float:
@@ -181,6 +183,7 @@ class RoadResult:
     pccp_vol: float = 0.0                                            # m³
     pccp_area: float = 0.0                                           # m² of concrete surface
     agg_vol: float = 0.0                                             # m³ aggregate subbase incl. shoulders
+    min_radius: float = 0.0                                          # smallest radius used for the checks
 
     @property
     def net(self) -> float:
@@ -491,7 +494,7 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
     pvis, vcs = [], []
     if rd.vcurves:
         pvis = vertical_pvis(rd, dd, dz)
-        vcs = vt.build(pvis, rd.speed)
+        vcs = vt.build(pvis, rd.speed, min_len=rd.vc_min)
         dz = vt.heights(dd, pvis, vcs)
     sd = np.array([s.s for s in stations])
     sx, sy = np.array([s.x for s in stations]), np.array([s.y for s in stations])
@@ -557,7 +560,8 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
                       float(-np.nanmin(depth)) if np.isfinite(depth).any() else 0.0,
                       sum(s.side_limit for s in stations), int((~np.isfinite(sg)).sum()), dem.crs_wkt, dem.cell,
                       al, cxy, warn, rd.standard, pvis, vcs, rd.speed if rd.vcurves else 0,
-                      pccp_vol=cp, pccp_area=rd.width * float(sd[-1]) if rd.pccp_t > 0 else 0.0, agg_vol=ca)
+                      pccp_vol=cp, pccp_area=rd.width * float(sd[-1]) if rd.pccp_t > 0 else 0.0, agg_vol=ca,
+                      min_radius=rd.min_radius or float((STANDARDS.get(rd.standard) or {}).get("min_radius", 0.0)))
 
 
 def vertical_pvis(rd: RoadDesign, d: np.ndarray, z: np.ndarray) -> list[list[float]]:
@@ -572,7 +576,7 @@ def vertical_pvis(rd: RoadDesign, d: np.ndarray, z: np.ndarray) -> list[list[flo
         p = [[0.0, float(z[0]), 0.0]] + [[float(a), float(np.interp(a, d, z)), 0.0]
                                          for a, _b in sorted(rd.targets) if 1.0 < float(a) < L - 1.0]
         return p + [[L, float(z[-1]), 0.0]]
-    return vt.propose(d, z)
+    return vt.propose(d, z, min_gap=max(20.0, rd.vc_min), end_gap=max(10.0, rd.vc_min / 2))
 
 
 def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, str]]:
@@ -582,10 +586,14 @@ def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, s
     for k, c in enumerate(al.curves, 1):
         if c.reduced:
             out.append((f"Curve {k} made smaller", f"The bend at point {c.vertex + 1} had room for a radius of only "
-                        f"{c.radius:.0f} m (asked {c.radius_asked:.0f} m): the straights next to it are too short."))
+                        f"{c.radius:.0f} m (asked {c.radius_asked:.0f} m): the straights next to it are too short."
+                        + (f" Move the bend point so a {rmin:g} m curve fits, or accept it; the report marks this "
+                           "curve." if rmin and c.radius < rmin - 1e-6 else "")))
         if rmin and c.radius < rmin - 1e-6:
-            out.append((f"Curve {k} is too tight", f"Radius {c.radius:.0f} m is less than the minimum {rmin:g} m"
-                        + (" of the chosen DPWH standard." if std else ".")))
+            dpwh = std["min_radius"] if std else 30.0
+            out.append((f"Curve {k} is tighter than {rmin:g} m", f"Radius {c.radius:.0f} m. On a bend this tight a "
+                        "6-wheeler truck swings across the centre line and drivers see less of the road ahead"
+                        + (f"; DPWH asks for at least {dpwh:g} m on this road." if c.radius < dpwh - 1e-6 else ".")))
         elif not rmin and c.radius < VERY_TIGHT:
             out.append((f"Curve {k} is very tight", f"Radius {c.radius:.0f} m: long trucks may not get around it."))
     if std:
@@ -610,21 +618,32 @@ def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, s
     return out
 
 
-def curve_rows(al) -> list[tuple]:
+def curve_note(c, rmin: float = 0.0) -> str:
+    """Why a curve is marked in the report: tighter than the smallest radius, or made smaller to fit."""
+    parts = []
+    if rmin and c.radius < rmin - 1e-6:
+        parts.append(f"BELOW the smallest radius {rmin:g} m")
+    if c.reduced:
+        parts.append(f"made smaller to fit (asked {c.radius_asked:.0f} m)")
+    return "; ".join(parts) or "-"
+
+
+def curve_rows(al, rmin: float = 0.0) -> list[tuple]:
     """Curve table: (no., PI easting, PI northing, deflection deg, radius, tangent, length, external, mid-ordinate,
-    PC station, PT station, turns)."""
+    PC station, PT station, turns, note)."""
     rows = []
     for k, c in enumerate(al.curves, 1):
         ext = c.radius * (1 / math.cos(math.radians(c.delta) / 2) - 1)
         rows.append((k, round(c.pi[0], 3), round(c.pi[1], 3), round(c.delta, 4), round(c.radius, 3),
                      round(c.tangent, 3), round(c.length, 3), round(ext, 3), round(c.mid_ordinate, 3),
-                     station_label(c.pc_s), station_label(c.pt_s), "left" if c.left else "right"))
+                     station_label(c.pc_s), station_label(c.pt_s), "left" if c.left else "right",
+                     curve_note(c, rmin)))
     return rows
 
 
 CURVE_HEADER = ("Curve", "PI easting (m)", "PI northing (m)", "Deflection (°)", "Radius (m)", "Tangent T (m)",
                 "Curve length (m)", "External E (m)", "Middle ordinate M (m)", "Curve start (PC)",
-                "Curve end (PT)", "Turns")
+                "Curve end (PT)", "Turns", "Note")
 
 
 def design_dict(rd: RoadDesign) -> dict:
@@ -639,7 +658,7 @@ def design_from(plan: dict) -> RoadDesign:
         raw["pccp_t"], raw["subbase_t"] = raw["pavement_t"], 0.0
     if raw and "ditch_in" not in raw:
         raw["ditch_in"] = 1.0
-    for k, old in (("ditch_w", 0.5), ("cut_ratio", 1.0), ("fill_ratio", 1.5)):
+    for k, old in (("ditch_w", 0.5), ("cut_ratio", 1.0), ("fill_ratio", 1.5), ("vc_min", 0.0)):
         if raw and k not in raw:
             raw[k] = old
     return RoadDesign(**{k: v for k, v in raw.items() if k in RoadDesign.__dataclass_fields__})
