@@ -175,7 +175,7 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     formulas and sources, searchable, Save as PDF. Keep it in step with the code.
   - Tests: test_filesets, test_convert, test_georef_manual, test_vertical; walkthroughs 6 (own files, convert,
     methods) and 7 (manual grid).
-- 1.2.0 (in progress; owner's plan of 2026-11-18, mockup https://claude.ai/artifact/AY7Ac34pmkdA5k4iY7nWVC,
+- 1.2.0 (done 2026-11-18; owner's plan of 2026-11-18, mockup https://claude.ai/artifact/AY7Ac34pmkdA5k4iY7nWVC,
   report style samples https://claude.ai/artifact/GML47tRUFdHTyj6Z3ZdsxZ). Stages A-H:
   - A done: dark navy theme; opens maximized, F11 full screen; "Convert files" renamed "Change SHP CRS"
     (`core/convert.py`: any shapefile part brings in its .shp, folders with optional sub-folders, .zip read in place
@@ -240,7 +240,9 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     signatures, annexes A / B / C. Export dialog (`ExportDialog`, tabs Report / Files): report number, revision,
     paper, office lines, logo, signatories table (remembered), elevation tick box. Tests `tests/test_report_pdf.py`.
     The lot / pad and pile report (`earthworks_report.py`) still uses the 1.1 Qt report.
-  - H tests, methods pages, 1.2.0 installers.
+  - H done: 137 tests + walkthroughs 1-8 pass; 1.2.0 installers built (dist\WhangDoodleGIS_Setup_1.2.0_Online.exe /
+    _Offline.exe, ODM 3.6.2) and installed on the owner's PC (engine OK, georef RMSE 0.40 m, frozen CLI makes the
+    road and canal reports with the bundled fonts, app opens as "WhangDoodleGIS 1.2.0").
 - The owner has real measurements in the DILG office job (`measurements.json`, `Measurements\`): leave them.
 - Stages of 0.4-1.0 (owner-approved plan, mockup https://claude.ai/artifact/3T7ULEFjTFzKYzcvSo7XLW):
   2 area earthworks wizard + PDF report; 3 guided road assistant (stations 5/10/15/20 m, start elevation, grades,
