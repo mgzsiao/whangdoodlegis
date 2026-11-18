@@ -133,6 +133,19 @@ P.next()
 shot("52_road_stations")
 P.next()
 wait(lambda: idle())
+assert P.step() == "rise" and P.max_grade.value() == 12 and P.max_fill.value() == 1.5 and P.max_cut.value() == 1.5
+assert all(m.text() == "starting value" for m in P.req_form.marks), [m.text() for m in P.req_form.marks]
+P.max_cut.setValue(1.0)
+assert "your value" in P.req_form.marks[3].text()
+assert not P.offset_m.isEnabled()
+_set_r = [b_ for b_ in P.pgroup.buttons() if b_.property("key") == "raised"][0]
+_set_r.setChecked(True)
+assert P.offset_m.isEnabled() and P.road_design().profile == "raised"
+wait(lambda: idle())
+shot("53a_road_raised")
+[b_ for b_ in P.pgroup.buttons() if b_.property("key") == "gentle"][0].setChecked(True)
+wait(lambda: idle())
+assert P.road_design().max_cut == 1.0
 shot("53_road_height")
 P.next()
 assert P.step() == "vcurves" and P.vc_yes.isChecked()

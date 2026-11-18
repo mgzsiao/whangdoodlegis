@@ -193,9 +193,16 @@ def topics() -> list[tuple[str, str, str]]:
                  "may type another value): tighter or shrunk curves are warned about and marked in the report's "
                  "curve table."),
             _sec("Road height", _list(
-                "Keep slopes gentle: the ground is smoothed (moving average over twice the station spacing, at "
-                "least 20 m) and grades are limited forward and backward to the maximum %.",
-                "Follow the ground (smoothed), keep it level, one straight slope, or through typed heights.")),
+                "Follow the ground: the ground is smoothed (moving average over twice the station spacing, at "
+                "least 20 m) and grades are limited forward and backward to the steepest grade.",
+                "Raised above / set into the ground: the same, moved up or down by the height chosen.",
+                "Your requirements: the road is then kept within the highest fill and the deepest cut at the centre "
+                "line. The fill / cut band is first narrowed so every point in it can be reached without breaking "
+                "the steepest grade (a pass forward and a pass backward along the road); the road is then moved into "
+                "it. The grade limit always holds; where the band cannot be met the app warns and the report lists "
+                "the stations. Stretches in cut flatter than the flattest grade are warned about (ditches must drain).",
+                "Also: follow the ground closely (smoothed only), keep it level, one straight grade between the start "
+                "and end levels, or through typed heights.")),
             _sec("Vertical curves", "Straight grades meet at grade change points (PVI). The app proposes the PVIs "
                  "by simplifying the chosen road height (Douglas–Peucker, 0.10 m), at least the shortest curve "
                  "apart (60 m by default) and half of it from the start and the end; you can edit them. At each "

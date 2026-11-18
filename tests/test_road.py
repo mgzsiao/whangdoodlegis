@@ -204,3 +204,33 @@ def test_dpwh_checks(flat):
     assert rdm.curve_rows(r.alignment, r.min_radius)[0][-1].startswith("BELOW the smallest radius 30 m")
     assert rdm.STANDARDS["fmr"]["width"] == 6.1 and rdm.STANDARDS["fmr_low"]["width"] == 5.0
     assert rdm.STANDARDS["tourism"]["min_radius"] == 50 and rdm.STANDARDS["fmr"]["min_radius"] == 30
+
+
+# ---------------------------------------------------------------- 1.2 stage D: how the road sits on the ground
+def test_raised_and_set_into_the_ground(flat):
+    # raised 0.8 m on flat ground: 6 x 0.8 + 2 x (1.6 x 0.8 / 2) = 6.08 m² fill (2 : 1 sides)
+    r = rdm.design_road(flat, LINE, plain(start_mode="ground", profile="raised", offset_m=0.8))
+    assert all(abs(s.design - 100.8) < 1e-6 for s in r.stations)
+    assert r.stations[3].fill_area == pytest.approx(6.08, rel=0.005)
+    # set 0.5 m into the ground: 6 x 0.5 + 2 x (0.5 x 0.5 / 2) = 3.25 m² cut (1 : 1 sides)
+    r = rdm.design_road(flat, LINE, plain(start_mode="ground", profile="into", offset_m=0.5))
+    assert all(abs(s.design - 99.5) < 1e-6 for s in r.stations)
+    assert r.stations[3].cut_area == pytest.approx(3.25, rel=0.005)
+
+
+def test_fill_and_cut_limits(tmp_path):
+    # a 3 m hump in the middle of flat ground; at most 3% grade the road cuts deep into it
+    r_, c_ = np.mgrid[0:800, 0:800]
+    x = (c_ + 0.5) * 0.25
+    hump = write_dem(tmp_path / "hump.tif", 100 + 3 * np.exp(-((x - 100) / 12) ** 2), 0.25)
+    free = rdm.design_road(hump, LINE, plain(start_mode="ground", profile="gentle", max_grade=3))
+    held = rdm.design_road(hump, LINE, plain(start_mode="ground", profile="gentle", max_grade=3, max_cut=1.0))
+    assert free.deepest_cut > 1.5                      # without a limit the road cuts deeper than 1 m
+    assert held.deepest_cut < free.deepest_cut - 0.3   # held up toward the 1 m limit ...
+    steep = np.max(np.abs(np.diff([s.design for s in held.stations])) / 10) * 100
+    assert steep <= 3 + 1e-6                           # ... without breaking the grade limit
+    titles = [t for t, _ in held.warnings]
+    if held.deepest_cut > 1.01:                        # where the grade limit wins, the app says so
+        assert "Cut deeper than your limit" in titles
+    # pre-1.2 plans have no limits
+    assert rdm.design_from({"road": {"profile": "gentle"}}).max_cut == 0

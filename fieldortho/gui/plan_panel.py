@@ -191,7 +191,7 @@ class PlanPanel(QWidget):
     TITLES = {"type": "What are you planning?", "draw": "Draw the area", "height": "How high should the ground be?",
               "edges": "What happens at the edges?", "ref": "Measure from what?", "soil": "Soil and trucks",
               "result": "Results", "stations": "How often should we check the ground?",
-              "rise": "How high should the road be?", "curves": "Curves: smooth the bends",
+              "rise": "How does the road sit on the ground?", "curves": "Curves: smooth the bends",
               "vcurves": "Smooth the grade changes?", **rp.TITLES}
 
     def __init__(self, page):
@@ -620,23 +620,28 @@ class PlanPanel(QWidget):
         row.addWidget(self.start_hint, 1)
         lay.addLayout(row)
         lay.addSpacing(6)
-        lay.addWidget(label("How should the road rise and fall?", "H2"))
+        lay.addWidget(label("Road height", "H2"))
         self.pgroup = QButtonGroup(self)
-        rb = radio_block(self.pgroup, "gentle", "Keep slopes gentle",
-                         "Follows the land but never steeper than the slope below.", lay)
+        rb = radio_block(self.pgroup, "gentle", "Follow the ground",
+                         "A smooth grade that follows the land within your requirements below.", lay)
         rb.setChecked(True)
+        radio_block(self.pgroup, "raised", "Raised above the ground",
+                    "Follows the ground this much higher, e.g. in flood-prone areas.", lay)
+        radio_block(self.pgroup, "into", "Set into the ground",
+                    "Follows the ground this much lower: the road sits in cut.", lay)
         row = QHBoxLayout()
         row.setContentsMargins(24, 0, 0, 4)
-        self.max_grade = spin(0.5, 30, 8.0, " %", 1, 0.5, 100)
-        self.max_grade.valueChanged.connect(self._changed)
-        row.addWidget(QLabel("No steeper than"))
-        row.addWidget(self.max_grade)
-        row.addStretch(1)
+        row.addWidget(QLabel("by"))
+        self.offset_m = spin(0.05, 10, 0.5, " m", 2, 0.05, 100)
+        self.offset_m.valueChanged.connect(self._changed)
+        row.addWidget(self.offset_m)
+        row.addWidget(label("above or into the (smoothed) ground at the centre line", "Hint", wrap=True), 1)
         lay.addLayout(row)
-        radio_block(self.pgroup, "follow", "Follow the ground", "Least cut and fill: the road goes up and down with the "
-                    "land, only smoothed.", lay)
+        radio_block(self.pgroup, "follow", "Follow the ground closely", "Least cut and fill: the road goes up and "
+                    "down with the land, only smoothed (grades up to 25%).", lay)
         radio_block(self.pgroup, "level", "Keep it level", "One height (the starting height) for the whole road.", lay)
-        radio_block(self.pgroup, "straight", "One straight slope from start to end", "", lay)
+        radio_block(self.pgroup, "straight", "Start and end levels", "One straight grade from the start to the end "
+                    "height.", lay)
         row = QHBoxLayout()
         row.setContentsMargins(24, 0, 0, 4)
         self.end_ground = QCheckBox("End at the ground there, or at")
@@ -660,8 +665,33 @@ class PlanPanel(QWidget):
         lay.addWidget(self.targets)
         for b in self.pgroup.buttons():
             b.toggled.connect(self._changed)
-        lay.addWidget(explain("8% means the road rises 8 m for every 100 m. Gentler slopes are easier for loaded "
-                              "trucks but usually need more cut and fill. The heights are the road surface at the centre."))
+        # the designer's requirements (kept with the plan)
+        lay.addWidget(label("Your requirements", "H2"))
+        lay.addWidget(label("Starting values are shown; type your own. These are designer preferences, kept with "
+                            "the plan. Where the land does not allow them, the app warns you and the report lists it.",
+                            "Hint", wrap=True))
+        self.max_grade = spin(0.5, 30, 12.0, " %", 1, 0.5, 110)
+        self.min_grade = spin(0, 5, 0.5, " %", 2, 0.1, 110)
+        self.min_grade.setSpecialValueText("no check")
+        self.max_fill = spin(0, 30, 1.5, " m", 2, 0.1, 110)
+        self.max_fill.setSpecialValueText("no limit")
+        self.max_cut = spin(0, 30, 1.5, " m", 2, 0.1, 110)
+        self.max_cut.setSpecialValueText("no limit")
+        self.req_form = rp.PartForm([
+            ("Steepest grade", self.max_grade, "max_grade", 1, "%", "8% means 8 m up for every 100 m; DPWH: 12%"),
+            ("Flattest grade in cut", self.min_grade, "min_grade", 1, "%", "so the ditches drain; DPWH: 0.5%"),
+            ("Highest fill at the centre", self.max_fill, "max_fill", 1, " m", "road surface above the ground"),
+            ("Deepest cut at the centre", self.max_cut, "max_cut", 1, " m", "road surface below the ground")])
+        self.req_form.set_editing(True)
+        lay.addWidget(self.req_form)
+        self.req_more = label("", "Hint", wrap=True)
+        lay.addWidget(self.req_more)
+        for w_ in (self.max_grade, self.min_grade, self.max_fill, self.max_cut):
+            w_.valueChanged.connect(self._req_changed)
+        for b in self.pgroup.buttons():
+            b.toggled.connect(lambda on: self._req_changed() if on else None)
+        lay.addWidget(explain("The heights are the road surface at the centre line. Gentler grades are easier for "
+                              "loaded trucks but usually need more cut and fill."))
 
     def _p_vcurves(self, lay):
         lay.addWidget(label("Where the road changes from one slope to another (a grade change point, PVI), it can "
@@ -1027,6 +1057,7 @@ class PlanPanel(QWidget):
             self.r_cut.setValue(st["cut_ratio"])
             self.r_fill.setValue(st["fill_ratio"])
             self.r_min_radius.setValue(st["min_radius"])
+            self.max_grade.setValue(st["max_grade"])
         self._std_note()
         self._shape_changed()
 
@@ -1084,7 +1115,9 @@ class PlanPanel(QWidget):
         return rdm.RoadDesign(
             interval=self.interval(), start_mode="ground" if self.rb_start_g.isChecked() else "typed",
             start_z=self.start_z.value(), profile=b.property("key") if b else "gentle",
-            max_grade=self.max_grade.value(), end_mode="ground" if self.end_ground.isChecked() else "typed",
+            max_grade=self.max_grade.value(), offset_m=self.offset_m.value(), min_grade=self.min_grade.value(),
+            max_fill=self.max_fill.value(), max_cut=self.max_cut.value(),
+            end_mode="ground" if self.end_ground.isChecked() else "typed",
             end_z=self.end_z.value(), targets=targets, width=self.r_width.value(), crown_pct=self.r_crown.value(),
             shoulders=self.r_sh.isChecked(), shoulder_w=self.r_sh_w.value(), shoulder_pct=self.r_sh_p.value(),
             ditch=self.r_ditch.isChecked(), ditch_w=self.r_ditch_w.value(), ditch_d=self.r_ditch_d.value(),
@@ -1193,7 +1226,7 @@ class PlanPanel(QWidget):
         nxt = self.steps()[self.idx + 1] if not last else ""
         short = {"draw": "Draw the road line" if self.kind == "road" else "Draw the area", "height": "Height",
                  "edges": "Edges", "ref": "Measure from", "soil": "Soil and trucks", "stations": "Stations",
-                 "rise": "Road height", "curves": "Curves", "vcurves": "Grade changes", **rp.SHORT}
+                 "rise": "On the ground", "curves": "Curves", "vcurves": "Grade changes", **rp.SHORT}
         guided = key in rp.PART_STEPS or key == "std"
         self.next_btn.setText(("See the results" if nxt == "result" else "OK, next" if guided else
                                f"Next: {short.get(nxt, '')}") + "  ›" if nxt else "")
@@ -1222,6 +1255,7 @@ class PlanPanel(QWidget):
             self._station_text()
         if key == "rise":
             self._start_text()
+            self._req_changed()
         if key == "vcurves":
             self._vc_speed_default()
             self._fill_k_table()
@@ -1285,10 +1319,12 @@ class PlanPanel(QWidget):
             lines.append(f"\u2714 Stations every {self.interval():g} m")
         if "rise" in steps:
             b = self.pgroup.checkedButton()
+            k_ = b.property("key") if b else ""
             lines.append("\u2714 Road height: " + ("start at the ground" if self.rb_start_g.isChecked() else
                                                     f"start at {self.start_z.value():.2f} m") +
                          ", " + (b.text().lower() if b else "") +
-                         (f" ({self.max_grade.value():g}%)" if b and b.property("key") == "gentle" else ""))
+                         (f" by {self.offset_m.value():g} m" if k_ in ("raised", "into") else "") +
+                         (f" (up to {self.max_grade.value():g}%)" if k_ in ("gentle", "raised", "into") else ""))
         if "vcurves" in steps:
             lines.append(f"\u2714 Vertical curves for {self.vc_speed.currentData()} km/h"
                          if self.vc_yes.isChecked() else "\u2714 No vertical curves")
@@ -1381,6 +1417,23 @@ class PlanPanel(QWidget):
             self.start_z.blockSignals(True)
             self.start_z.setValue(round(z, 2))
             self.start_z.blockSignals(False)
+
+    REQ_START = {"max_grade": 12.0, "min_grade": 0.5, "max_fill": 1.5, "max_cut": 1.5}
+
+    def _req_changed(self, *_):
+        ref = dict(self.REQ_START)
+        std = rdm.STANDARDS.get(self.r_std.currentData() or "")
+        if std:
+            ref["max_grade"] = std["max_grade"]
+        self.req_form.refresh(ref, "starting value")
+        self.offset_m.setEnabled(self._profile() in ("raised", "into"))
+        self.req_more.setText(f"Also set on their own steps: smallest curve radius {self.r_min_radius.value():g} m "
+                              f"(Curves), shortest vertical curve {self.vc_min.value():g} m (Grade changes).")
+        self._changed()
+
+    def _profile(self) -> str:
+        b = self.pgroup.checkedButton()
+        return b.property("key") if b else "gentle"
 
     def _shape_text(self):
         if self.kind == "road" and self.page.finished and len(self.page.pts) >= 2:
@@ -1835,6 +1888,10 @@ class PlanPanel(QWidget):
             self.start_z.setValue(rd.start_z)
         _set_radio(self.pgroup, rd.profile)
         self.max_grade.setValue(rd.max_grade)
+        self.offset_m.setValue(rd.offset_m)
+        self.min_grade.setValue(rd.min_grade)
+        self.max_fill.setValue(rd.max_fill)
+        self.max_cut.setValue(rd.max_cut)
         self.end_ground.setChecked(rd.end_mode == "ground")
         if rd.end_z == rd.end_z:
             self.end_z.setValue(rd.end_z)

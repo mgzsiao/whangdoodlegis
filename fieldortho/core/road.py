@@ -21,7 +21,7 @@ from . import alignment as alm, earthworks as ew, measure as ms, vertical as vt
 from .terrain import Dem
 
 MAX_SIDE = 60.0           # metres beyond the shoulder that a side slope is followed
-PROFILE_MODES = ("follow", "gentle", "level", "straight", "targets")
+PROFILE_MODES = ("follow", "gentle", "raised", "into", "level", "straight", "targets")
 VERY_TIGHT = 15.0         # m: below this radius a curve is flagged as very tight (no standard chosen)
 
 # Road standards the user can choose. Values from DPWH Department Order No. 112, s. 2019 ("Revised Design
@@ -67,8 +67,12 @@ class RoadDesign:
     interval: float = 10.0
     start_mode: str = "ground"          # ground | typed
     start_z: float = float("nan")
-    profile: str = "gentle"             # follow | gentle | level | straight | targets
-    max_grade: float = 8.0              # %, for "gentle"
+    profile: str = "gentle"             # follow | gentle | raised | into | level | straight | targets
+    max_grade: float = 8.0              # %, steepest grade for gentle / raised / into
+    offset_m: float = 0.5               # raised: this much above the (smoothed) ground; into: below it
+    min_grade: float = 0.5              # %, flattest grade where the road is in cut (drainage); 0 = no check
+    max_fill: float = 0.0               # m, highest fill at the centre line (0 = no limit)
+    max_cut: float = 0.0                # m, deepest cut at the centre line (0 = no limit)
     end_mode: str = "ground"            # straight: ground | typed
     end_z: float = float("nan")
     targets: list = field(default_factory=list)      # [[station m, height m], ...]
@@ -323,12 +327,43 @@ def road_heights(d: np.ndarray, ground: np.ndarray, rd: RoadDesign) -> np.ndarra
         if t[0][0] > 1e-6:
             t = [(0.0, start)] + t
         return np.interp(d, [a for a, _ in t], [b for _, b in t])
-    target = _smooth(g, d, max(20.0, 2 * rd.interval))
-    target[0] = start
-    grade = (rd.max_grade if mode == "gentle" else 25.0) / 100
+    # follow / gentle / raised / into: the smoothed ground (moved up or down), grades limited, then kept within
+    # the designer's highest fill and deepest cut at the centre line where the grade limit allows
+    off = rd.offset_m if mode == "raised" else -rd.offset_m if mode == "into" else 0.0
+    target = _smooth(g, d, max(20.0, 2 * rd.interval)) + off
+    target[0] = start + (off if rd.start_mode == "ground" else 0.0)
+    grade = (rd.max_grade if mode != "follow" else 25.0) / 100
     if grade <= 0:
         raise ValueError("The steepest slope must be more than 0%.")
-    return _limit_grades(target, d, grade)
+    z = _limit_grades(target, d, grade)
+    if rd.max_fill > 0 or rd.max_cut > 0:
+        hi = g + rd.max_fill if rd.max_fill > 0 else np.full_like(g, np.inf)
+        lo = g - rd.max_cut if rd.max_cut > 0 else np.full_like(g, -np.inf)
+        lo[0] = hi[0] = z[0]                           # the start stays where it was asked
+        z = _limit_grades(_within_band(z, d, lo, hi, grade), d, grade)
+    return z
+
+
+def _within_band(z, d, lo, hi, g):
+    """Move the road z (grade-limited to g) into lo..hi with as little change as possible, keeping the grade
+    limit: the band is first tightened so that every point in it can be reached within the grade (a forward and
+    a backward pass), then z is clipped into it. Clipping a grade-limited line into grade-limited bounds keeps it
+    grade-limited. Where the band cannot be met (too narrow for the grade) its middle is used and the warnings
+    report the stations that stay outside."""
+    lo, hi = lo.astype(float).copy(), hi.astype(float).copy()
+    for i in range(1, len(z)):
+        dd = d[i] - d[i - 1]
+        lo[i] = max(lo[i], lo[i - 1] - g * dd)
+        hi[i] = min(hi[i], hi[i - 1] + g * dd)
+    for i in range(len(z) - 2, -1, -1):
+        dd = d[i + 1] - d[i]
+        lo[i] = max(lo[i], lo[i + 1] - g * dd)
+        hi[i] = min(hi[i], hi[i + 1] + g * dd)
+    bad = lo > hi
+    if bad.any():
+        mid = (lo + hi) / 2
+        lo, hi = np.where(bad, mid, lo), np.where(bad, mid, hi)
+    return np.clip(z, lo, hi)
 
 
 # ============================================================================ cross-sections
@@ -522,6 +557,8 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
     depth = sg - sz
     soil = ew.SOILS.get(rd.soil, ew.SOILS["custom"])[0]
     prof = {"follow": "follow the ground (smoothed)", "gentle": f"follow the ground, no steeper than {rd.max_grade:g}%",
+            "raised": f"{rd.offset_m:g} m above the (smoothed) ground, no steeper than {rd.max_grade:g}%",
+            "into": f"{rd.offset_m:g} m into the (smoothed) ground, no steeper than {rd.max_grade:g}%",
             "level": "level", "straight": "one straight slope from start to end",
             "targets": "through the heights typed: " + ", ".join(f"{station_label(a)} = {b:.2f} m"
                                                                   for a, b in rd.targets)}[rd.profile]
@@ -546,7 +583,14 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
               ("Curves", curves),
               ("Starting height", (f"ground at the start ({stations[0].design:.2f} m)" if rd.start_mode == "ground"
                                    else f"{rd.start_z:.2f} m (typed)")),
-              ("How the road rises and falls", prof), ("Vertical curves", vtxt), ("Road shape", shape),
+              ("How the road rises and falls", prof),
+              ("Your requirements", "; ".join(x for x in (
+                  f"highest fill at the centre {rd.max_fill:g} m" if rd.max_fill > 0 else "",
+                  f"deepest cut at the centre {rd.max_cut:g} m" if rd.max_cut > 0 else "",
+                  f"flattest grade in cut {rd.min_grade:g}%" if rd.min_grade > 0 else "",
+                  f"smallest curve radius {rd.min_radius:g} m" if rd.min_radius > 0 else "",
+                  f"shortest vertical curve {rd.vc_min:g} m" if rd.vc_min > 0 else "") if x) or "none"),
+              ("Vertical curves", vtxt), ("Road shape", shape),
               ("Pavement layers", f"PCCP {rd.pccp_t * 1000:.0f} mm on aggregate subbase {rd.subbase_t * 1000:.0f} mm "
                                   "(earthworks stop below the subbase)" if rd.pavement_t > 0 else "none"),
               ("Side slopes", f"{soil}: cut {rd.cut_ratio:g} : 1, fill {rd.fill_ratio:g} : 1 (out : up)"),
@@ -607,14 +651,24 @@ def road_warnings(al, rd: RoadDesign, stations, grades, sd) -> list[tuple[str, s
         if rd.fill_ratio < 1.5 - 1e-9:
             out.append(("Fill sides too steep", f"{rd.fill_ratio:g} : 1 is steeper than the DPWH maximum fill slope "
                         "of 1.5 : 1."))
-        flat_cut = 0
-        for i, st_ in enumerate(stations[:-1]):
-            g = abs(grades[i]) if i < len(grades) else 99
-            if st_.depth == st_.depth and st_.depth > 0 and g < 0.5:
-                flat_cut += 1
-        if flat_cut:
-            out.append(("Too flat in cut", f"{flat_cut} stretch(es) of the road are in cut and flatter than 0.50%: "
-                        "water may not drain (DPWH minimum on cut sections)."))
+    gmin = rd.min_grade if rd.min_grade > 0 else (0.5 if std else 0.0)
+    if gmin > 0:
+        flat = [st_.label for i, st_ in enumerate(stations[:-1])
+                if st_.depth == st_.depth and st_.depth > 0 and i < len(grades) and abs(grades[i]) < gmin - 1e-9]
+        if flat:
+            out.append(("Too flat in cut", f"{len(flat)} stretch(es) of the road are in cut and flatter than "
+                        f"{gmin:g}% (from {flat[0]}): water may not drain from the ditches"
+                        + (" (DPWH minimum on cut sections)." if std else ".")))
+    for lim, sign, word in ((rd.max_fill, -1, "fill"), (rd.max_cut, 1, "cut")):
+        if lim > 0:
+            over = [st_ for st_ in stations if st_.depth == st_.depth and sign * st_.depth > lim + 0.01]
+            if over:
+                w = max(over, key=lambda q: sign * q.depth)
+                out.append((f"{word.title()} deeper than your limit" if word == "cut" else "Fill higher than your limit",
+                            f"At {len(over)} station(s) the {word} at the centre line is more than {lim:g} m "
+                            f"(most: {sign * w.depth:.2f} m at {w.label}): the steepest grade allowed does not let "
+                            "the road stay closer to the ground there. Allow a steeper grade or move the line, or "
+                            "accept it; the report lists it."))
     return out
 
 
@@ -658,7 +712,8 @@ def design_from(plan: dict) -> RoadDesign:
         raw["pccp_t"], raw["subbase_t"] = raw["pavement_t"], 0.0
     if raw and "ditch_in" not in raw:
         raw["ditch_in"] = 1.0
-    for k, old in (("ditch_w", 0.5), ("cut_ratio", 1.0), ("fill_ratio", 1.5), ("vc_min", 0.0)):
+    for k, old in (("ditch_w", 0.5), ("cut_ratio", 1.0), ("fill_ratio", 1.5), ("vc_min", 0.0), ("max_fill", 0.0),
+                   ("max_cut", 0.0), ("min_grade", 0.0)):
         if raw and k not in raw:
             raw[k] = old
     return RoadDesign(**{k: v for k, v in raw.items() if k in RoadDesign.__dataclass_fields__})

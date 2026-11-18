@@ -195,7 +195,13 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     warned and marked in the curve table "Note") and `vc_min` (60 m: L = max(K|A|, 0.6 V, vc_min); proposed PVIs
     vc_min apart and vc_min/2 from the ends; shortened curves marked "SHORTENED" in the vertical curve table).
     Pre-1.2 plans load with vc_min 0 (old behaviour).
-  - D "follow the ground" with the designer's requirements; E superelevation
+  - D done: road height modes add "raised" / "into" (`offset_m` above / into the smoothed ground). Designer's
+    requirements on the same step (`max_grade` 12%, `min_grade` 0.5% in cut, `max_fill` / `max_cut` 1.5 m at the
+    centre line; 0 = none, pre-1.2 plans load with none): the grade-limited line is moved into the fill / cut band
+    after tightening the band to the grade limit (`_within_band`, forward + backward pass), so the grade limit
+    always holds; stations still outside are warned ("Fill higher than your limit" / "Cut deeper ...") and listed.
+    The flat-in-cut check now runs for every road (rd.min_grade).
+  - E superelevation
     (AASHTO Method 5, emax 6%), widening (AASHTO, SU truck), AASHTO 1993 rigid check; F canal model + design flow
     by the Rational Method (show the owner the runoff-coefficient table and its source first); G new report
     (B + C style, ReportLab, plan + profile sheet, two-column cross-sections, A4/A3 + long bond, quantities only,
