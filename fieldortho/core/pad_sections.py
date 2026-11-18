@@ -114,8 +114,10 @@ def sections(t: ew.Takeoff, outline, design: ew.PadDesign | None = None):
                         if len(rng) > 2:
                             e = rng[0] if side < 0 else rng[-1]
                             slopes.append((offs_c[j], e, xd.ratio_text(r_, cut)))
-        out.append(xd.SectionData(f"SEC. {station_label(s)}", offs_c, zg, np.where(np.isfinite(zf), zf, np.nan),
-                                  zc_g, zc_f, info, slopes))
+        sd = xd.SectionData(f"SEC. {station_label(s)}", offs_c, zg, np.where(np.isfinite(zf), zf, np.nan),
+                            zc_g, zc_f, info, slopes)
+        sd.s = float(s)                               # distance along the lot (for the report)
+        out.append(sd)
         qty.append((station_label(s), f"{dist:.2f}", f"{ca:.2f}", f"{fa:.2f}", f"{cv:.2f}", f"{fv:.2f}"))
     qty.append(("TOTAL (end-area check)", f"{L:.2f}", "", "", f"{cum_c:.2f}", f"{cum_f:.2f}"))
     qty.append(("Plan totals (grid method)", "", "", "", f"{t.cut:.2f}", f"{t.fill:.2f}"))

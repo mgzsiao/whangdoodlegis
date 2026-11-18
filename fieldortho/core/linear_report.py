@@ -197,24 +197,96 @@ def canal_criteria(r, cd) -> tuple[list, list]:
     return rows, notes
 
 
+# ============================================================================ parts shared with the lot report
+def signatories(info: dict) -> list:
+    sign = [tuple(x) for x in (info.get("signatories") or DEFAULT_SIGNATORIES)]
+    if info.get("prepared_by") and sign and not sign[0][1]:
+        sign[0] = (sign[0][0], info["prepared_by"], sign[0][2])
+    return sign
+
+
+def start_document(path: str, info: dict, plan: dict, job, kind: str, facts: list, standard: str):
+    """(doc, styles, story with cover and contents, paper, signatories)."""
+    paper = PAPERS.get(info.get("paper") or "a4_a3", PAPERS["a4_a3"])
+    S = styles()
+    today = datetime.now()
+    sign = signatories(info)
+    if job is not None:
+        dt = (job.finished or job.created or "")[:10]
+        try:
+            survey = "Drone survey processed " + datetime.strptime(dt, "%Y-%m-%d").strftime("%d %B %Y")
+        except ValueError:
+            survey = ""
+    else:
+        survey = "Elevation model: your own file"
+    control = [(rl, nm, ps, today.strftime("%Y-%m-%d") if i == 0 else "") for i, (rl, nm, ps) in enumerate(sign)
+               if rl.strip()]
+    office = [ln for ln in (info.get("office") or []) if ln.strip()]
+    doc_info = DocInfo(info.get("project") or plan.get("name", ""), kind, info.get("location") or "",
+                       info.get("report_no", ""), info.get("revision", "0"), today.strftime("%d %B %Y"), office,
+                       info.get("logo", ""), facts, control, standard, survey)
+    doc = ReportDoc(path, paper, doc_info)
+    story = [Cover(doc_info, paper.page), NextPageTemplate("body"), PageBreak(),
+             Paragraph("Contents", S["h2"]), Spacer(1, 4), contents(S), PageBreak()]
+    return doc, S, story, paper, sign
+
+
+def survey_section(S, BW, plan, quality, job, dst_crs, grid_name) -> list:
+    from . import crs as crsmod
+    out = [Paragraph(
+        "The design uses the elevation model listed below. "
+        + ("The bare-ground model (DTM) removes trees and buildings; levels and volumes are worked out on it."
+           if plan.get("source", "dtm") == "dtm" else ""), S["body"])]
+    q = [(a, b) for a, b in quality] + [("Coordinates in the files", crsmod.label(dst_crs)),
+                                        ("N / E in this report", grid_name)]
+    out.append(table(S, q, [0.36 * BW, 0.64 * BW]))
+    out.append(Paragraph("What this means for accuracy", S["h3"]))
+    gcp = bool(job is not None and getattr(job.options, "gcp_file", ""))
+    acc = ["<b>Within the site</b>, distances, slopes, levels and volumes are reliable to a few centimetres where "
+           "the ground is visible from the air."]
+    if job is None:
+        acc.append("<b>As a whole</b>, the accuracy is that of your own elevation file; check its source and date.")
+    elif gcp:
+        acc.append("<b>As a whole</b>, the survey is tied to ground control points (see the table above).")
+    else:
+        acc.append("<b>As a whole</b>, without ground control points the survey can sit a few metres off its true "
+                   "position and height (the drone's own GPS). Tie the project to a survey monument before staking "
+                   "out.")
+    acc.append("<b>Under dense trees</b> the ground model is estimated from the nearest visible ground. Check levels "
+               "in the field where the map shows tree cover.")
+    return out + bullets(S, acc)
+
+
+def closing_section(S, BW, lim, sign) -> list:
+    out = section(S, "6", "Limitations, disclaimer and signatures")
+    out.append(Paragraph("Limitations", S["h3"]))
+    out += bullets(S, lim)
+    out.append(Paragraph("Disclaimer", S["h3"]))
+    for p_ in DISCLAIMER_PARAGRAPHS:
+        out.append(Paragraph(esc(p_), S["small"]))
+    return out + [Spacer(1, 10), KeepTogether([signatures(S, [x for x in sign if x[0].strip()], BW)])]
+
+
+def files_annex(S, BW, files, letter="C") -> list:
+    out = [PageBreak()] + section(S, letter, f"Annex {letter} · Files delivered with this report",
+                                  eyebrow=f"ANNEX {letter}")
+    frows = []
+    for f in files:
+        ext = os.path.splitext(f)[1].lower()
+        frows.append((os.path.basename(f), FILE_KINDS.get(ext, ext.lstrip(".").upper())))
+    return out + [table(S, frows, [0.62 * BW, 0.38 * BW], header=("File", "What it is"))]
+
+
 # ============================================================================ the report
 def write_report(path: str, r, plan: dict, info: dict, dem_path: str, ortho_path: str | None, job, dst_crs: str,
                  files: list, map_img, worked: list, quality: list) -> str:
-    from . import crs as crsmod
     canal = hasattr(r, "q_capacity")
     if canal:
         from . import canal as cn
         des = cn.design_from(plan)
     else:
         des = rdm.design_from(plan)
-    paper = PAPERS.get(info.get("paper") or "a4_a3", PAPERS["a4_a3"])
-    S = styles()
     project = info.get("project") or plan.get("name", "")
-    location = info.get("location") or ""
-    today = datetime.now()
-    sign = [tuple(x) for x in (info.get("signatories") or DEFAULT_SIGNATORIES)]
-    if info.get("prepared_by") and not sign[0][1]:
-        sign[0] = (sign[0][0], info["prepared_by"], sign[0][2])
     ends = end_points(r, dst_crs, canal)
     show_elev = bool(info.get("show_elev"))
     st = r.stations
@@ -235,24 +307,8 @@ def write_report(path: str, r, plan: dict, info: dict, dem_path: str, ortho_path
                  (f"{r.cut:,.0f} m³", "cut (roadway excavation)")]
         kind = "Road design and quantities"
         standard = (f"DPWH D.O. 112 s. 2019 · {std['label'].lower()}" if std else "Designer's own values")
-    survey = ""
-    if job is not None:
-        dt = (job.finished or job.created or "")[:10]
-        try:
-            survey = "Drone survey processed " + datetime.strptime(dt, "%Y-%m-%d").strftime("%d %B %Y")
-        except ValueError:
-            survey = ""
-    else:
-        survey = "Elevation model: your own file"
-    control = [(rl, nm, ps, today.strftime("%Y-%m-%d") if i == 0 else "") for i, (rl, nm, ps) in enumerate(sign)
-               if rl.strip()]
-    office = [ln for ln in (info.get("office") or []) if ln.strip()]
-    doc_info = DocInfo(project, kind, location, info.get("report_no", ""), info.get("revision", "0"),
-                       today.strftime("%d %B %Y"), office, info.get("logo", ""), facts, control, standard, survey)
-    doc = ReportDoc(path, paper, doc_info)
+    doc, S, story, paper, sign = start_document(path, info, plan, job, kind, facts, standard)
     BW = doc.body_width
-    story = [Cover(doc_info, paper.page), NextPageTemplate("body"), PageBreak()]
-    story += [Paragraph("Contents", S["h2"]), Spacer(1, 4), contents(S), PageBreak()]
     # ---------------------------------------------------------------- 1 at a glance
     story += section(S, "1", "Project at a glance")
     if canal:
@@ -294,28 +350,7 @@ def write_report(path: str, r, plan: dict, info: dict, dem_path: str, ortho_path
     story.append(table(S, rows, [w * BW for w in widths], header=hdr, num_cols=(4,) if show_elev else ()))
     # ---------------------------------------------------------------- 2 site and survey data
     story += [PageBreak()] + section(S, "2", "Site and survey data")
-    story.append(Paragraph(
-        "The design uses the elevation model listed below. "
-        + ("The bare-ground model (DTM) removes trees and buildings; levels and volumes are worked out on it."
-           if plan.get("source", "dtm") == "dtm" else ""), S["body"]))
-    q = [(a, b) for a, b in quality] + [("Coordinates in the files", crsmod.label(dst_crs)),
-                                        ("N / E in this report", grid_name)]
-    story.append(table(S, q, [0.36 * BW, 0.64 * BW]))
-    story.append(Paragraph("What this means for accuracy", S["h3"]))
-    gcp = bool(job is not None and getattr(job.options, "gcp_file", ""))
-    acc = ["<b>Within the site</b>, distances, slopes, levels and volumes are reliable to a few centimetres where "
-           "the ground is visible from the air."]
-    if job is None:
-        acc.append("<b>As a whole</b>, the accuracy is that of your own elevation file; check its source and date.")
-    elif gcp:
-        acc.append("<b>As a whole</b>, the survey is tied to ground control points (see the table above).")
-    else:
-        acc.append("<b>As a whole</b>, without ground control points the survey can sit a few metres off its true "
-                   "position and height (the drone's own GPS). Tie the project to a survey monument before staking "
-                   "out.")
-    acc.append("<b>Under dense trees</b> the ground model is estimated from the nearest visible ground. Check levels "
-               "in the field where the map shows tree cover.")
-    story += bullets(S, acc)
+    story += survey_section(S, BW, plan, quality, job, dst_crs, grid_name)
     g_ok = [s_ for s_ in st if s_.ground == s_.ground]
     if g_ok:
         lo = min(g_ok, key=lambda s_: s_.ground)
@@ -451,8 +486,6 @@ def write_report(path: str, r, plan: dict, info: dict, dem_path: str, ortho_path
                            toc_text=f"Sheet {i} · {title}"))
     story.append(NextPageTemplate("body"))
     # ---------------------------------------------------------------- 6 limitations, disclaimer, signatures
-    story += section(S, "6", "Limitations, disclaimer and signatures")
-    story.append(Paragraph("Limitations", S["h3"]))
     lim = ["Levels and volumes come from the elevation model described in section 2; confirm benchmark levels in "
            "the field before construction.",
            "Quantities are neat volumes: no allowance for waste or overbreak; compaction only through the shrink "
@@ -468,11 +501,7 @@ def write_report(path: str, r, plan: dict, info: dict, dem_path: str, ortho_path
                 + (" and the AASHTO 1993 check for the traffic entered" if des.aashto else "")
                 + "; a full pavement design needs measured soil strength (CBR) and traffic counts.",
                 "Drainage structures (culverts, cross drains) are not designed in this report."]
-    story += bullets(S, lim)
-    story.append(Paragraph("Disclaimer", S["h3"]))
-    for p_ in DISCLAIMER_PARAGRAPHS:
-        story.append(Paragraph(esc(p_), S["small"]))
-    story += [Spacer(1, 10), KeepTogether([signatures(S, [x for x in sign if x[0].strip()], BW)])]
+    story += closing_section(S, BW, lim, sign)
     # ---------------------------------------------------------------- annexes
     from .road_report import station_rows
     story += [PageBreak()] + section(S, "A", "Annex A · Quantities by station", eyebrow="ANNEX A")
@@ -505,11 +534,6 @@ def write_report(path: str, r, plan: dict, info: dict, dem_path: str, ortho_path
     story.append(Paragraph("<br/>".join(esc(f_) for f_ in forms), S["formula"]))
     for line in worked:
         story.append(Paragraph(esc(line), S["body"]))
-    story += [PageBreak()] + section(S, "C", "Annex C · Files delivered with this report", eyebrow="ANNEX C")
-    frows = []
-    for f in files:
-        ext = os.path.splitext(f)[1].lower()
-        frows.append((os.path.basename(f), FILE_KINDS.get(ext, ext.lstrip(".").upper())))
-    story.append(table(S, frows, [0.62 * BW, 0.38 * BW], header=("File", "What it is")))
+    story += files_annex(S, BW, files)
     doc.make(story)
     return path

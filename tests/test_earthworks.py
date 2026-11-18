@@ -165,8 +165,8 @@ def test_export_package(tilted, tmp_path):
                               gis_formats=("gpkg", "dxf"))
     names = {os.path.basename(f) for f in files}
     for n in ("Barangay_hall_pad_report.pdf", "Barangay_hall_pad_quantities.xlsx", "Barangay_hall_pad.gpkg",
-              "Barangay_hall_pad_spot_levels.csv", "Barangay_hall_pad_dig_fill_depth_m.tif",
-              "Barangay_hall_pad_finished_ground_m.tif", "Barangay_hall_pad_dig_fill_map.png",
+              "Barangay_hall_pad_spot_levels.csv", "Barangay_hall_pad_cut_fill_depth_m.tif",
+              "Barangay_hall_pad_finished_ground_m.tif", "Barangay_hall_pad_cut_fill_map.png",
               "Barangay_hall_pad.plan.json", "Barangay_hall_pad_README.txt"):
         assert n in names, n
     assert os.path.getsize(tmp_path / "pkg" / "Barangay_hall_pad_report.pdf") > 20_000
@@ -186,7 +186,7 @@ def test_export_package(tilted, tmp_path):
         if last[i] > 1:
             assert abs(check[i] - last[i]) / last[i] < 0.05, (check, last)
     assert wb["Spot levels"].max_row > 30
-    with rasterio.open(tmp_path / "pkg" / "Barangay_hall_pad_dig_fill_depth_m.tif") as ds:
+    with rasterio.open(tmp_path / "pkg" / "Barangay_hall_pad_cut_fill_depth_m.tif") as ds:
         dz = ds.read(1, masked=True)
         cut = float(dz[dz > 0].sum() * abs(ds.transform.a * ds.transform.e))
     assert cut == pytest.approx(t.cut, rel=0.01)

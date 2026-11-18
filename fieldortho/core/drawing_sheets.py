@@ -32,6 +32,7 @@ CUT_SOFT = Color(196 / 255, 40 / 255, 32 / 255, 0.16)
 FILL_SOFT = Color(30 / 255, 90 / 255, 170 / 255, 0.16)
 WATER = Color(74 / 255, 144 / 255, 200 / 255, 0.35)
 GRID = Color(0.86, 0.88, 0.92)
+AMBER_LINE = Color(0.96, 0.72, 0.25)
 GRID_MAJ = Color(0.76, 0.79, 0.85)
 
 
@@ -75,6 +76,7 @@ class Ctx:
     coord_note: str = ""
     background: object = None                     # fn(bounds, px) -> (PIL image, bounds) or None
     sheets_total: int = 0                         # set once all sheets are known
+    lot: bool = False                             # lot / pad or pile sections (no road layers)
     first_sheet: int = 1
     header_right: str = ""
 
@@ -864,6 +866,7 @@ class XS:
     layers: list = field(default_factory=list)        # (kind, [(u, z), ...])
     labels: list = field(default_factory=list)        # (u, z)
     slopes: list = field(default_factory=list)        # (u a, u b, text)
+    title: str = ""                                   # instead of the station (lot sections)
     left: float = 0.0                                 # works extent
     right: float = 0.0
     zmin: float = 0.0
@@ -1090,7 +1093,8 @@ def xs_sheets(xss: list[XS], ctx: Ctx, first: int = 1) -> list:
         def fn(c, W, H, grp=grp, k=k):
             _draw_xs_sheet(c, W, H, grp, ctx, rows, den, k, len(groups), first)
         fst, lst = grp[0].station, grp[-1].station
-        out.append((fn, f"Cross-sections {k + 1} of {len(groups)}, {kst(fst.s)} to {kst(lst.s)}"))
+        out.append((fn, f"Cross-sections {k + 1} of {len(groups)}, " + (f"sections {grp[0].number} to {grp[-1].number}"
+                                                                        if ctx.lot else f"{kst(fst.s)} to {kst(lst.s)}")))
     return out
 
 
@@ -1110,7 +1114,9 @@ def _draw_xs_sheet(c, W, H, grp, ctx: Ctx, rows, den, k, n, first=1):
     big = ctx.paper.sheet_name == "A3"
     ly = y0f + g["bottom"] - 7 * mm
     lx = x0f + 4 * mm
-    if ctx.canal:
+    if ctx.lot:
+        items = [("fill", "Fill"), ("cut", "Cut")]
+    elif ctx.canal:
         items = [("lining", f"Concrete lining {ctx.design.lining_t * 1000:.0f} mm"),
                  ("water", "Water at the design flow"), ("fill", "Earth bank (fill)"), ("cut", "Cut (excavation)")]
     else:
@@ -1137,11 +1143,16 @@ def _draw_xs_sheet(c, W, H, grp, ctx: Ctx, rows, den, k, n, first=1):
     c.setFont(SANS, 6.4 if big else 5.9)
     c.setFillColor(INK2)
     c.drawString(x0f + 4 * mm, ly - 4.2 * mm, _clip(
-        "Under each section: elevation (underlined) over offset from the centre line in metres (− = left), looking "
-        "toward higher stations. Numbered down the left column, then the right. Volumes: average end-area.",
+        ("Under each section: elevation (underlined) over offset from the middle line of the lot in metres (− = left), "
+         "looking along the lot. Numbered down the left column, then the right. Volumes: average end-area (a check)."
+         if ctx.lot else
+         "Under each section: elevation (underlined) over offset from the centre line in metres (− = left), looking "
+         "toward higher stations. Numbered down the left column, then the right. Volumes: average end-area."),
         SANS, 6.4, x1f - x0f - tbw - 10 * mm))
+    rng = (f"sections {grp[0].number} to {grp[-1].number}" if ctx.lot
+           else f"{kst(grp[0].station.s)} to {kst(grp[-1].station.s)}")
     title_block(c, x1f, y0f, tbw, tbh, f"CROSS-SECTIONS {k + 1} / {n}", f"{ctx.paper.sheet_name} · 1:{den:,}",
-                f"{ctx.project} · {kst(grp[0].station.s)} to {kst(grp[-1].station.s)}",
+                f"{ctx.project} · {rng}",
                 f"Sheet {first + k} of {ctx.sheets_total}" if ctx.sheets_total else "")
 
 
@@ -1172,7 +1183,7 @@ def _draw_xs(c, xs: XS, px, py, g, kpt, ctx: Ctx):
     ty = py + ph - 4.0 * mm
     c.setFont(HEAD_B, 8.2)
     c.setFillColor(NAVY)
-    t1 = kst(xs.station.s)
+    t1 = xs.title or kst(xs.station.s)
     c.drawString(px + 2.4 * mm, ty, t1)
     if xs.mark:
         c.setFont(HEAD, 7.4)
@@ -1287,3 +1298,194 @@ def _draw_xs(c, xs: XS, px, py, g, kpt, ctx: Ctx):
         c.line(x - w / 2, top_y - fs * 1.05, x + w / 2, top_y - fs * 1.05)
         c.setFillColor(INK2)
         c.drawCentredString(x, top_y - fs * 0.85 - lh, o_t)
+
+
+# ============================================================================ lot / pad and pile
+def lot_sections(secs) -> list[XS]:
+    """XS from pad_sections.sections (SectionData with .s = distance along the lot)."""
+    from types import SimpleNamespace
+    out = []
+    for n, sd in enumerate(secs, 1):
+        u = np.asarray(sd.offsets, float)
+        g = np.asarray(sd.ground, float)
+        f = np.asarray(sd.design, float)
+        ok = np.isfinite(f)
+        if not ok.any():
+            continue
+        xs = XS(SimpleNamespace(s=getattr(sd, "s", 0.0), design=sd.centre_design if sd.centre_design == sd.centre_design
+                                else float(np.nanmean(f))), n)
+        xs.title = f"Section {n} · {getattr(sd, 's', 0.0):.2f} m"
+        xs.u, xs.ground, xs.finished, xs.earth = u, g, f, f
+        xs.left, xs.right = float(u[ok][0]), float(u[ok][-1])
+        labels = [(xs.left, float(f[ok][0])), (xs.right, float(f[ok][-1]))]
+        for k in _kinks(u[ok] - xs.left, f[ok], 0.0, xs.right - xs.left, tol=0.08):
+            labels.append((k + xs.left, float(np.interp(k + xs.left, u[ok], f[ok]))))
+        if xs.left < 0 < xs.right:
+            labels.append((0.0, float(np.interp(0.0, u[ok], f[ok]))))
+        xs.labels = sorted(set((round(a, 3), round(b, 3)) for a, b in labels))
+        xs.slopes = [(a, b, t) for a, b, t in sd.slopes]
+        sel = (u >= xs.left - 1.5) & (u <= xs.right + 1.5)
+        zz = np.concatenate([g[sel], f[sel]])
+        zz = zz[np.isfinite(zz)]
+        xs.zmin, xs.zmax = float(zz.min()), float(zz.max())
+        info = dict(sd.info)
+        og = f"{sd.centre_ground:.3f}" if sd.centre_ground == sd.centre_ground else "–"
+        fg = f"{sd.centre_design:.3f}" if sd.centre_design == sd.centre_design else "–"
+        xs.head_right = f"at the middle line: ground = {og}   finished = {fg}"
+        xs.head_line2 = (f"Cut area {info.get('Cut area', '–')} · Fill area {info.get('Fill area', '–')}"
+                         + (f" · since the previous section ({info.get('Distance from last', '')}): cut "
+                            f"{info.get('Cut volume since last', '')}, fill {info.get('Fill volume since last', '')}"
+                            if n > 1 else ""))
+        out.append(xs)
+    if out:
+        out[0].mark = "FIRST"
+        if len(out) > 1:
+            out[-1].mark = "LAST"
+    return out
+
+
+def lot_plan_sheet(t, outline, spots, ctx: Ctx, title: str, first: int = 1, pile: bool = False):
+    """(draw fn, toc text): the outline on the drone map with the cut / fill colours, numbered corners, spot levels
+    where there is room, north arrow, scale bar, legend and title block, at a standard scale."""
+    def fn(c, W, H):
+        x0f, y0f, x1f, y1f = _frame(W, H)
+        big = ctx.paper.sheet_name == "A3"
+        bottom = (18 if big else 15) * mm
+        ax0, ay0, ax1, ay1 = x0f, y0f + bottom, x1f, y1f
+        c.setStrokeColor(INK)
+        c.setLineWidth(0.9)
+        c.rect(x0f, y0f, x1f - x0f, y1f - y0f)
+        h_, w_ = t.dz.shape
+        tr = t.transform
+        xs_ = [p[0] for p in outline] + [tr.c, tr.c + w_ * tr.a]
+        ys_ = [p[1] for p in outline] + [tr.f, tr.f + h_ * tr.e]
+        bx0, bx1, by0, by1 = min(xs_), max(xs_), min(ys_), max(ys_)
+        mx, my = (bx0 + bx1) / 2, (by0 + by1) / 2
+        need = max((bx1 - bx0) * 1.25 * 1000 / ((ax1 - ax0) / mm), (by1 - by0) * 1.25 * 1000 / ((ay1 - ay0) / mm))
+        den = nice_scale(max(need, 50))
+        k = 1000.0 / den * mm
+        cx, cy = (ax0 + ax1) / 2, (ay0 + ay1) / 2
+
+        def P(x, y):
+            return cx + (x - mx) * k, cy + (y - my) * k
+        c.saveState()
+        c.clipPath(_path([(ax0, ay0), (ax1, ay0), (ax1, ay1), (ax0, ay1)], True), stroke=0, fill=0)
+        c.setFillColor(Color(0.95, 0.96, 0.97))
+        c.rect(ax0, ay0, ax1 - ax0, ay1 - ay0, stroke=0, fill=1)
+        vb = (mx - (cx - ax0) / k, my - (cy - ay0) / k, mx + (ax1 - cx) / k, my + (ay1 - cy) / k)
+        if ctx.background is not None:
+            try:
+                got = ctx.background(vb, int(min(2600, max(600, (ax1 - ax0) / 72 * 170))))
+            except Exception:
+                got = None
+            if got is not None:
+                im, (gx0, gy0, gx1, gy1) = got
+                p0, p1 = P(gx0, gy0), P(gx1, gy1)
+                c.drawImage(jpeg_reader(im, 82), p0[0], p0[1], p1[0] - p0[0], p1[1] - p0[1])
+                c.setFillColor(Color(1, 1, 1, 0.2))
+                c.rect(ax0, ay0, ax1 - ax0, ay1 - ay0, stroke=0, fill=1)
+        from PIL import Image
+        from reportlab.lib.utils import ImageReader
+        from . import measure as ms
+        rgba = ms.overlay_rgba(t.dz)
+        p0, p1 = P(tr.c, tr.f + h_ * tr.e), P(tr.c + w_ * tr.a, tr.f)
+        c.drawImage(ImageReader(Image.fromarray(rgba, "RGBA")), p0[0], p0[1], p1[0] - p0[0], p1[1] - p0[1],
+                    mask="auto")
+        ring = [P(*q) for q in outline] + [P(*outline[0])]
+        c.setStrokeColor(INK)
+        c.setLineWidth(2.6)
+        _line(c, ring)
+        c.setStrokeColor(AMBER_LINE)
+        c.setLineWidth(1.4)
+        _line(c, ring)
+        # spot levels where there is room
+        if len(spots) > 1:
+            dx = min((math.dist(spots[0][1:3], q[1:3]) for q in spots[1:]), default=0)
+            gap = dx * k
+            for row in spots:
+                X, Y = P(row[1], row[2])
+                if not (ax0 < X < ax1 and ay0 < Y < ay1) or gap < 6 * mm:
+                    continue
+                cf = row[5]
+                if cf is None:
+                    continue
+                c.setFillColor(INK)
+                c.circle(X, Y, 0.35 * mm, stroke=0, fill=1)
+                c.setFont(MONO, 5.2 if gap < 11 * mm else 5.8)
+                c.setFillColor(CUT if cf > 0.0005 else (FILL if cf < -0.0005 else INK))
+                c.drawCentredString(X, Y + 1.0 * mm, ("0.00" if abs(cf) < 0.005 else f"{cf:+.2f}").replace("-", "−"))
+                if gap >= 11 * mm and row[4] is not None:
+                    c.setFillColor(INK2)
+                    c.drawCentredString(X, Y - 2.6 * mm, f"{row[4]:.2f}")
+        c.restoreState()
+        # numbered corners
+        for i, q in enumerate(outline, 1):
+            X, Y = P(*q)
+            c.setFillColor(white)
+            c.setStrokeColor(INK)
+            c.setLineWidth(0.7)
+            c.circle(X, Y, 1.0 * mm, stroke=1, fill=1)
+            t_ = f"P{i}"
+            c.setFont(MONO_M, 6.6)
+            w = stringWidth(t_, MONO_M, 6.6)
+            c.setFillColor(Color(1, 1, 1, 0.85))
+            c.rect(X + 1.4 * mm, Y + 1.0 * mm, w + 2, 8, stroke=0, fill=1)
+            c.setFillColor(INK)
+            c.drawString(X + 1.4 * mm + 1, Y + 1.0 * mm + 2, t_)
+        c.setStrokeColor(NAVY)
+        c.setLineWidth(0.8)
+        c.rect(ax0, ay0, ax1 - ax0, ay1 - ay0)
+        c.setFillColor(white)
+        c.rect(ax0, ay1 - 7 * mm, 26 * mm, 7 * mm, stroke=0, fill=1)
+        c.setFont(HEAD, 8.6)
+        c.setFillColor(NAVY)
+        c.drawString(ax0 + 3 * mm, ay1 - 5 * mm, "PLAN")
+        # north arrow (north up) and scale bar
+        nx_, ny_ = ax1 - 12 * mm, ay1 - 13 * mm
+        c.setFillColor(Color(1, 1, 1, 0.85))
+        c.circle(nx_, ny_, 7.5 * mm, stroke=0, fill=1)
+        c.setFillColor(INK)
+        c.drawPath(_path([(nx_, ny_ + 6 * mm), (nx_ - 2.4 * mm, ny_ - 4.5 * mm), (nx_, ny_ - 2 * mm),
+                          (nx_ + 2.4 * mm, ny_ - 4.5 * mm)], True), stroke=0, fill=1)
+        c.setFont(SANS_B, 7)
+        c.drawCentredString(nx_, ny_ - 7.6 * mm - 2.4, "N")
+        bar = next(v for v in (1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000) if v * k >= 30 * mm)
+        bw = bar * k
+        sx, sy = ax1 - bw - 10 * mm, ay0 + 4 * mm
+        c.setFillColor(Color(1, 1, 1, 0.9))
+        c.rect(sx - 4 * mm, sy - 2 * mm, bw + 12 * mm, 10 * mm, stroke=0, fill=1)
+        c.setStrokeColor(INK)
+        c.setLineWidth(0.5)
+        for j in range(4):
+            c.setFillColor(INK if j % 2 == 0 else white)
+            c.rect(sx + j * bw / 4, sy, bw / 4, 1.4 * mm, stroke=1, fill=1)
+        c.setFillColor(INK)
+        c.setFont(MONO, 6.2)
+        c.drawString(sx - 1, sy + 2.6 * mm, "0")
+        c.drawCentredString(sx + bw / 2, sy + 2.6 * mm, f"{bar / 2:g}")
+        c.drawString(sx + bw - 2, sy + 2.6 * mm, f"{bar:g} m")
+        # legend and notes, title block
+        tbw, tbh = (128 if big else 104) * mm, (15 if big else 12.5) * mm
+        ly = y0f + bottom - 7 * mm
+        lx = x0f + 4 * mm
+        c.setFont(SANS, 6.8)
+        for col, text in ((Color(196 / 255, 40 / 255, 32 / 255, 0.7),
+                           "Above the reference (pile)" if pile else "Cut (deeper = stronger)"),
+                          (Color(30 / 255, 90 / 255, 170 / 255, 0.7),
+                           "Below the reference (hole)" if pile else "Fill (higher = stronger)"),
+                          (AMBER_LINE, "Outline, corners P1, P2, …")):
+            c.setFillColor(col)
+            c.rect(lx, ly, 7 * mm, 3.4 * mm, stroke=0, fill=1)
+            c.setFillColor(INK)
+            c.drawString(lx + 9 * mm, ly + 0.8 * mm, text)
+            lx += 9 * mm + stringWidth(text, SANS, 6.8) + 8 * mm
+        c.setFont(SANS, 6.2)
+        c.setFillColor(INK2)
+        c.drawString(x0f + 4 * mm, ly - 4.2 * mm, _clip(
+            ("Spot levels: height above + / below − the reference surface in metres, the reference level below when "
+             "there is room. Corner coordinates are listed in section 1. North is up." if pile else
+             "Spot levels: cut + / fill − in metres (ground now minus finished), finished level below when there is "
+             "room. Corner coordinates are listed in section 1. North is up."), SANS, 6.2, x1f - x0f - tbw - 10 * mm))
+        title_block(c, x1f, y0f, tbw, tbh, title, f"{ctx.paper.sheet_name} · 1:{den:,}", ctx.project,
+                    f"Sheet {first} of {ctx.sheets_total}" if ctx.sheets_total else "")
+    return fn, title.capitalize()

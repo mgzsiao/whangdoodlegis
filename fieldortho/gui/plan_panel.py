@@ -217,7 +217,8 @@ class ExportDialog(QDialog):
         row.addWidget(b)
         row.addStretch(1)
         rb.addLayout(row)
-        self.elev = QCheckBox("Add the elevation to the BEGIN and END coordinates")
+        self.elev = QCheckBox("Add the elevation to the BEGIN and END coordinates" if road else
+                              "Add the ground and finished levels to the corner coordinates")
         self.elev.setChecked(bool(p.get("show_elev", False)))
         rb.addWidget(self.elev)
         rl.addWidget(self.road_box)
@@ -241,18 +242,12 @@ class ExportDialog(QDialog):
         fl.addWidget(self.folder)
         fl.addStretch(1)
         tabs.addTab(fil, "Files")
+        self.by.setVisible(False)                 # 1.2: the signatories table holds the names
+        f.labelForField(self.by).setVisible(False)
         if road:
             self.rasters.setVisible(False)
             self.spacing.setVisible(False)
             f.labelForField(self.spacing).setVisible(False)
-            self.by.setVisible(False)
-            f.labelForField(self.by).setVisible(False)
-        else:
-            self.road_box.setVisible(False)
-            for w_ in (self.report_no, self.revision, self.paper, self._rev_lbl):
-                w_.setVisible(False)
-            self._hide_row(f, "Report number")
-            self._hide_row(f, "Paper")
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.button(QDialogButtonBox.Ok).setText("Make report and files")
         bb.accepted.connect(self._ok)
@@ -306,10 +301,9 @@ class ExportDialog(QDialog):
         prefs = _prefs()
         prefs.update({"location": self.location.text(), "prepared_by": self.by.text(),
                       "spacing": self.spacing.value(), "formats": self.fmts.selected()})
-        if self.road:
-            i = self.info()
-            prefs.update({"paper": i["paper"], "office": i["office"], "logo": i["logo"],
-                          "signatories": [list(x) for x in i["signatories"]], "show_elev": i["show_elev"]})
+        i = self.info()
+        prefs.update({"paper": i["paper"], "office": i["office"], "logo": i["logo"],
+                      "signatories": [list(x) for x in i["signatories"]], "show_elev": i["show_elev"]})
         _save_prefs(prefs)
         self.accept()
 

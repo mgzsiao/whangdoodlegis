@@ -239,7 +239,11 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     311 for roads, quantities only; canal without item numbers), 5 drawings, 6 limitations + disclaimer +
     signatures, annexes A / B / C. Export dialog (`ExportDialog`, tabs Report / Files): report number, revision,
     paper, office lines, logo, signatories table (remembered), elevation tick box. Tests `tests/test_report_pdf.py`.
-    The lot / pad and pile report (`earthworks_report.py`) still uses the 1.1 Qt report.
+    1.2.1: the lot / pad and pile report uses the same style (`core/lot_report.py`: corner coordinates, design
+    inputs, quantities, lot plan sheet at a standard scale with spot levels `drawing_sheets.lot_plan_sheet`,
+    pad sections via `drawing_sheets.lot_sections`); shared parts in `linear_report` (`start_document`,
+    `survey_section`, `closing_section`, `files_annex`). The old Qt report code was removed; raster files renamed
+    `_cut_fill_depth_m` / `_cut_fill_map`.
   - H done: 137 tests + walkthroughs 1-8 pass; 1.2.0 installers built (dist\WhangDoodleGIS_Setup_1.2.0_Online.exe /
     _Offline.exe, ODM 3.6.2) and installed on the owner's PC (engine OK, georef RMSE 0.40 m, frozen CLI makes the
     road and canal reports with the bundled fonts, app opens as "WhangDoodleGIS 1.2.0").

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import csv
-import html
 import math
 import os
 import shutil
@@ -13,7 +12,7 @@ import numpy as np
 import rasterio
 from PIL import Image, ImageDraw, ImageFont
 
-from .. import APP_NAME, DISCLAIMER_PARAGRAPHS, __version__
+from .. import APP_NAME, DISCLAIMER_PARAGRAPHS
 from . import earthworks as ew, exporters as ex, measure as ms
 from .terrain import Dem, write_array
 
@@ -164,104 +163,6 @@ def ms_nice(target: float) -> float:
     return p
 
 
-def section_line(t: ew.Takeoff, outline) -> tuple[np.ndarray, np.ndarray, str]:
-    """A line through the middle of the outline: along the drainage slope, else along the longer side."""
-    from shapely.geometry import Polygon
-    poly = Polygon(outline)
-    c = poly.centroid
-    if t.kind == "pad" and t.slope_pct > 0 and t.flow_deg is not None:
-        az = t.flow_deg
-    else:
-        x0, y0, x1, y1 = poly.bounds
-        az = 90.0 if (x1 - x0) >= (y1 - y0) else 0.0
-    ux, uy = math.sin(math.radians(az)), math.cos(math.radians(az))
-    h, w = t.dz.shape
-    tr = t.transform
-    half = 0.5 * math.hypot(w * tr.a, h * tr.e)
-    a = np.array([c.x - ux * half, c.y - uy * half])
-    b = np.array([c.x + ux * half, c.y + uy * half])
-    return a, b, ew.compass_name(az + 180) + " → " + ew.compass_name(az)
-
-
-def section_image(t: ew.Takeoff, outline, width: int = 1600, height: int = 560) -> Image.Image:
-    a, b, label = section_line(t, outline)
-    g = Dem(t.ground, t.transform, t.crs_wkt, "")
-    f = Dem(t.finished, t.transform, t.crs_wkt, "")
-    xy, dist = ms.densify([a, b], max(t.cell, 0.1))
-    zg = ms.sample(g, xy[:, 0], xy[:, 1])
-    # finished: nearest cell, only where worked
-    tr = t.transform
-    cc = np.clip(((xy[:, 0] - tr.c) / tr.a).astype(int), 0, t.dz.shape[1] - 1)
-    rr = np.clip(((xy[:, 1] - tr.f) / tr.e).astype(int), 0, t.dz.shape[0] - 1)
-    zf = t.finished[rr, cc]
-    worked = np.isfinite(zf)
-    keep = np.isfinite(zg)
-    if worked.any():                         # show the worked part plus 20% each side
-        i0, i1 = np.flatnonzero(worked)[[0, -1]]
-        pad = max(5, int((i1 - i0) * 0.2))
-        keep &= (np.arange(len(zg)) >= i0 - pad) & (np.arange(len(zg)) <= i1 + pad)
-    d0 = dist[keep][0] if keep.any() else 0.0
-    dd, zg, zf = dist[keep] - d0, zg[keep], zf[keep]
-    im = Image.new("RGB", (width, height), "white")
-    dr = ImageDraw.Draw(im)
-    if len(dd) < 2:
-        dr.text((20, 20), "No elevation data along the side view.", font=_font(20), fill=INK)
-        return im
-    zall = np.concatenate([zg, zf[np.isfinite(zf)]])
-    z0, z1 = float(np.nanmin(zall)), float(np.nanmax(zall))
-    padz = max(0.5, (z1 - z0) * 0.15)
-    z0, z1 = z0 - padz, z1 + padz
-    L, R, T, B = 110, 30, 60, 70
-    pw, ph = width - L - R, height - T - B
-    dmax = float(dd[-1]) or 1.0
-
-    def P(di, zi):
-        return (L + di / dmax * pw, T + (z1 - zi) / (z1 - z0) * ph)
-    f14, f16 = _font(22), _font(24, True)
-    for k in range(6):
-        zz = z0 + (z1 - z0) * k / 5
-        y = T + ph - ph * k / 5
-        dr.line([(L, y), (L + pw, y)], fill=(225, 229, 236), width=1)
-        dr.text((10, y - 12), f"{zz:.1f} m", font=f14, fill=MUTED)
-    step = ms_nice(dmax / 6)
-    x = 0.0
-    while x <= dmax + 1e-9:
-        X = P(x, z0)[0]
-        dr.line([(X, T + ph), (X, T + ph + 6)], fill=MUTED, width=2)
-        dr.text((X - 20, T + ph + 10), f"{x:g} m", font=f14, fill=MUTED)
-        x += step
-    # cut / fill shading, column by column
-    for i in range(len(dd) - 1):
-        if not (np.isfinite(zf[i]) and np.isfinite(zg[i])):
-            continue
-        xa, xb = P(dd[i], 0)[0], P(dd[i + 1], 0)[0]
-        ya, yb = P(0, zg[i])[1], P(0, zf[i])[1]
-        if abs(ya - yb) < 0.5:
-            continue
-        col = CUT_RGB if zg[i] > zf[i] else FILL_RGB
-        dr.rectangle([xa, min(ya, yb), max(xb, xa + 1), max(ya, yb)], fill=tuple(int(c * 0.35 + 255 * 0.65)
-                                                                                  for c in col))
-    pts = [P(x, z) for x, z in zip(dd, zg)]
-    dr.line(pts, fill=GROUND_RGB, width=4)
-    seg = []
-    for x, z in zip(dd, zf):
-        if np.isfinite(z):
-            seg.append(P(x, z))
-        elif seg:
-            if len(seg) > 1:
-                dr.line(seg, fill=NAVY, width=5)
-            seg = []
-    if len(seg) > 1:
-        dr.line(seg, fill=NAVY, width=5)
-    dr.text((L, 14), f"Side view through the middle ({label})", font=f16, fill=INK)
-    lx = width - 560
-    for col, txt in ((GROUND_RGB, "Ground now"), (NAVY, "Finished" if t.kind == "pad" else "Measured from")):
-        dr.rectangle([lx, 24, lx + 30, 30], fill=col)
-        dr.text((lx + 40, 12), txt, font=f14, fill=INK)
-        lx += 230
-    return im
-
-
 # ============================================================================ tables
 def worked_example(t: ew.Takeoff, qty: list) -> list[str]:
     """Step-by-step check with this plan's numbers (plain text paragraphs)."""
@@ -375,148 +276,6 @@ def write_csv(path: str, header, rows) -> str:
 
 
 # ============================================================================ PDF
-def _ensure_qt():
-    from PySide6.QtGui import QGuiApplication
-    if QGuiApplication.instance() is None:
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        _ensure_qt.app = QGuiApplication([])          # keep a reference
-
-
-def _qimage(im: Image.Image):
-    from PySide6.QtGui import QImage
-    data = im.convert("RGB").tobytes()
-    return QImage(data, im.width, im.height, 3 * im.width, QImage.Format_RGB888).copy()
-
-
-def write_pdf(path: str, body_html: str, images: dict) -> str:
-    _ensure_qt()
-    from PySide6.QtCore import QMarginsF, QSizeF, QUrl
-    from PySide6.QtGui import QFont, QPageLayout, QPageSize, QPdfWriter, QTextDocument
-    w = QPdfWriter(path)
-    w.setPageSize(QPageSize(QPageSize.A4))
-    w.setPageMargins(QMarginsF(14, 14, 14, 16), QPageLayout.Millimeter)
-    w.setTitle("Earthworks estimate")
-    w.setCreator(f"{APP_NAME} {__version__}")
-    doc = QTextDocument()
-    doc.setDefaultFont(QFont("Segoe UI", 9))
-    doc.setPageSize(QSizeF(520, 760))            # points: A4 minus margins; print_ scales to the page
-    doc.setDocumentMargin(0)
-    for name, im in images.items():
-        doc.addResource(QTextDocument.ImageResource, QUrl(name), _qimage(im))
-    doc.setHtml(body_html)
-    doc.print_(w)
-    return path
-
-
-def _table(rows, widths=("45%", "25%", "30%"), header=None, big=False) -> str:
-    out = ['<table width="100%" cellspacing="0" cellpadding="3" style="border-collapse: collapse; font-size: 8pt;">']
-    if header:
-        out.append("<tr>" + "".join(f'<th align="left" width="{w}" style="background:#1F3F77; color:white;">'
-                                     f"{html.escape(h)}</th>" for h, w in zip(header, widths)) + "</tr>")
-    for i, row in enumerate(rows):
-        bg = "#F3F5F9" if i % 2 else "#FFFFFF"
-        cells = []
-        for j, v in enumerate(row):
-            txt = html.escape(str(v))
-            if j == 1 and big:
-                txt = f"<b>{txt}</b>"
-            if j == 0 and str(v).isupper():
-                txt = f"<b>{txt}</b>"
-            cells.append(f'<td width="{widths[min(j, len(widths) - 1)]}" style="background:{bg};">{txt}</td>')
-        out.append("<tr>" + "".join(cells) + "</tr>")
-    out.append("</table>")
-    return "".join(out)
-
-
-def report_html(t: ew.Takeoff, plan: dict, meta: list, q: list, inp: list, quality: list, files: list,
-                map_size=(1000, 800), sec=None) -> str:
-    """sec: dict(sizes=[(w, h)], qty=rows, step=m, along=text, worked=[text]) for the cross-section pages."""
-    name = html.escape(plan.get("name", "Earthworks"))
-    kind = ew.TYPES.get(t.kind, t.kind)
-    h = t.haul
-    if t.kind == "pile":
-        big = [("Above (pile)", f"{t.cut:,.0f} m³"), ("Below (hole)", f"{t.fill:,.0f} m³"),
-               ("Net", f"{t.net:,.0f} m³"), ("Area", f"{t.area.area_2d:,.0f} m²")]
-    else:
-        big = [("Cut", f"{t.cut:,.0f} m³"), ("Fill", f"{t.fill:,.0f} m³"), ("Net", f"{t.net:,.0f} m³"),
-               ("Total moved", f"{t.total:,.0f} m³")]
-    cells = "".join(f'<td width="25%" align="center" style="background:#E7EDF7; padding:5px;">'
-                    f'<span style="color:#5D677A; font-size:8pt;">{html.escape(k.upper())}</span><br>'
-                    f'<span style="font-size:15pt; font-weight:600;">{html.escape(v)}</span></td>' for k, v in big)
-    parts = [
-        f'<p style="color:#5D677A; font-size:8pt; margin:0;">{APP_NAME} {__version__} · Earthworks estimate</p>',
-        f'<h1 style="font-size:16pt; color:#1A2233; margin:2px 0 4px 0;">{name}</h1>',
-        f'<p style="font-size:10pt; color:#1F3F77; margin:0 0 8px 0;">{html.escape(kind)}</p>',
-        _table(meta, ("30%", "70%")),
-        '<h2 style="font-size:12pt; margin-top:8px;">At a glance</h2>',
-        f'<p style="font-size:9pt;">{html.escape(t.headline())}<br>{html.escape(h.sentence())}</p>',
-        f'<table width="100%" cellspacing="4" cellpadding="0"><tr>{cells}</tr></table>',
-    ]
-    warn = []
-    if t.reaches_edge:
-        warn.append("The sloped sides reach the edge of the area read from the drone map (or of the map itself). "
-                    "The real side volumes may be larger.")
-    if t.no_data_pct > 2:
-        warn.append(f"{t.no_data_pct:.0f}% of the outline has no height data; those parts are not counted.")
-    for wtxt in warn:
-        parts.append(f'<p style="background:#FFF4E0; color:#9A5B00; padding:6px;">⚠ {html.escape(wtxt)}</p>')
-    mw, mh = map_size
-    scale = min(520 / mw, 500 / mh)
-    parts += [
-        '<h2 style="font-size:12pt; margin-top:8px;">Quantities</h2>',
-        _table(q, header=("Quantity", "Value", "Note"), big=True),
-        '<h2 style="font-size:12pt; page-break-before: always;">Map</h2>',
-        f'<p align="center"><img src="map.png" width="{int(mw * scale)}" height="{int(mh * scale)}"></p>',
-        '<p style="color:#5D677A; font-size:8pt;">Red = ground to cut away, blue = ground to fill; stronger colour = '
-        'deeper. Amber line = the outline.</p>',
-        '<h2 style="font-size:12pt; margin-top:10px;">Side view</h2>',
-        '<p><img src="section.png" width="520" height="182"></p>',
-    ]
-    if sec and sec.get("sizes"):
-        parts.append('<h2 style="font-size:12pt; page-break-before: always;">Quantities by section</h2>')
-        parts.append(_table(sec["qty"], ("26%", "14%", "15%", "15%", "15%", "15%"),
-                            header=("Section", "Distance m", "Cut area m²", "Fill area m²", "Cut volume m³",
-                                    "Fill volume m³")))
-        parts.append(f'<p style="color:#5D677A; font-size:8pt;">Sections every {sec["step"]:g} m along the lot '
-                     f'({html.escape(sec["along"])}), each one across it. Volumes between sections by the average '
-                     'end-area method as a check; the plan totals use the finer grid method.</p>')
-        for k, (sw, sh) in enumerate(sec["sizes"]):
-            parts.append(f'<h2 style="font-size:12pt; page-break-before: always;">Cross-sections'
-                         f'{" (continued)" if k else ""}</h2>')
-            if not k:
-                parts.append('<p style="color:#5D677A; font-size:8pt;">Looking along the lot; offsets in metres from '
-                             'the middle line, true scale. Brown = ground now, navy = finished ground and sides, red = '
-                             'cut, blue = fill. The box gives each section\'s areas and the volumes since the '
-                             'previous section.</p>')
-            parts.append(f'<p><img src="sections{k}.png" width="520" height="{int(round(520 * sh / sw))}"></p>')
-    if sec and sec.get("worked"):
-        parts.append('<h2 style="font-size:12pt; page-break-before: always;">How the numbers were computed '
-                     '(worked example)</h2>')
-        parts.append('<p style="font-size:8.5pt;">The totals recomputed by hand with this plan\'s numbers. The full '
-                     'methods are in the app under \u201cHow things are computed\u201d.</p>')
-        for tx in sec["worked"]:
-            parts.append(f'<p style="font-size:8.5pt;">\u2022 {html.escape(tx)}</p>')
-    parts += [
-        '<h2 style="font-size:12pt; page-break-before: always;">Design inputs</h2>',
-        _table(inp, ("40%", "60%")),
-        '<h2 style="font-size:12pt; margin-top:14px;">Data quality</h2>',
-        _table(quality, ("40%", "60%")),
-    ]
-    if files:
-        parts.append('<h2 style="font-size:12pt; margin-top:14px;">Files in this package</h2>')
-        parts.append(_table([(os.path.basename(f), FILE_NOTES.get(os.path.splitext(f)[1].lower(), ""))
-                             for f in files], ("50%", "50%")))
-    parts.append('<h2 style="font-size:12pt; margin-top:14px;">Notes and disclaimer</h2>')
-    for p in EARTHWORKS_NOTES + DISCLAIMER_PARAGRAPHS:
-        parts.append(f'<p style="font-size:8pt; color:#5D677A;">{html.escape(p)}</p>')
-    return "".join(parts)
-
-
-FILE_NOTES = {".pdf": "This report", ".xml": "LandXML for Civil 3D (surfaces, alignment, profile, sections)", ".xlsx": "Quantities, inputs and spot levels (Excel)",
-              ".csv": "Table for any spreadsheet", ".gpkg": "GIS layers (QGIS, ArcGIS)", ".shp": "GIS layer (Shapefile)",
-              ".geojson": "GIS layer (GeoJSON)", ".kml": "Google Earth", ".dxf": "CAD (AutoCAD, Civil 3D)",
-              ".tif": "GeoTIFF raster", ".png": "Picture with world file", ".json": "Plan settings (reopen in the app)",
-              ".txt": "Read me"}
 
 
 # ============================================================================ package
@@ -598,7 +357,7 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
             progress(35, "Rasters")
             g = Dem(t.dz, t.transform, src, "")
             p = write_array(g, t.dz, os.path.join(tmp, "dz.tif"))
-            files += ex.export_raster(p, base + "_dig_fill_depth_m", ["gtiff"], dst_crs, kind="dem", lonlat=lonlat)
+            files += ex.export_raster(p, base + "_cut_fill_depth_m", ["gtiff"], dst_crs, kind="dem", lonlat=lonlat)
             p = write_array(g, t.finished, os.path.join(tmp, "fin.tif"))
             files += ex.export_raster(p, base + ("_finished_ground_m" if t.kind == "pad" else "_reference_surface_m"),
                                       ["gtiff"], dst_crs, kind="dem", lonlat=lonlat)
@@ -606,15 +365,15 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
             rgba = ms.overlay_rgba(t.dz)
             rgba[..., 3] = np.where(np.isfinite(t.dz), 255, 0)
             p = _rgba_tif(g, rgba, os.path.join(tmp, "cf.tif"))
-            files += ex.export_raster(p, base + "_dig_fill_map", ["png"], dst_crs, kind="classes", lonlat=lonlat)
+            files += ex.export_raster(p, base + "_cut_fill_map", ["png"], dst_crs, kind="classes", lonlat=lonlat)
 
         progress(55, "Tables")
-        sec_imgs, qty, step, along = [], [], 0.0, ""
+        secs, qty, step, along = [], [], 0.0, ""
         if t.kind == "pad":
             from . import pad_sections
             design = ew.PadDesign(**{k: v for k, v in (plan.get("design") or {}).items()
                                      if k in ew.PadDesign.__dataclass_fields__})
-            sec_imgs, qty, step, along = pad_sections.sheets(t, outline, design)
+            secs, qty, step, along = pad_sections.sections(t, outline, design)
         worked = worked_example(t, qty)
         files.append(write_xlsx(base + "_quantities.xlsx", title, meta, q, inp, spots,
                                 list(EARTHWORKS_NOTES + DISCLAIMER_PARAGRAPHS), qty, worked))
@@ -636,7 +395,6 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
 
         progress(70, "Pictures")
         mimg = map_image(t, outline, dem_path, ortho_path)
-        simg = section_image(t, outline)
         mimg.save(base + "_map.png")
         files.append(base + "_map.png")
 
@@ -651,10 +409,9 @@ def export_package(t: ew.Takeoff, plan: dict, dem_path: str, ortho_path: str | N
         listed = [f for f in dict.fromkeys([pdf_path] + files + [readme])
                   if not f.lower().endswith((".aux.xml", ".pgw", ".wld", ".jgw", ".tfw"))]
         progress(85, "PDF report")
-        sec = dict(sizes=[im.size for im in sec_imgs], qty=qty, step=step, along=along, worked=worked)
-        imgs = {"map.png": mimg, "section.png": simg}
-        imgs.update({f"sections{k}.png": im for k, im in enumerate(sec_imgs)})
-        write_pdf(pdf_path, report_html(t, plan, meta, q, inp, quality, listed, mimg.size, sec), imgs)
+        from . import lot_report
+        lot_report.write_lot_report(pdf_path, t, plan, info, dem_path, ortho_path, job, dst_crs, listed, mimg, q, inp,
+                                    quality, spots, secs, qty, step, along, worked)
         files.insert(0, pdf_path)
         ex.write_export_readme(readme, f"{APP_NAME} {title}", dst_crs, lonlat, files, notes)
         files.append(readme)

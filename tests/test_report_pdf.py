@@ -142,3 +142,31 @@ def test_report_pages_and_papers(tmp_path, paper, portrait, sheet):
     # cover, contents, sections 1-6 and annexes A-C are portrait (section 3 may run onto a second page)
     assert pages.count(portrait) >= 11 and set(pages) == {portrait, sheet}
     assert pages[0] == portrait and pages[-1] == portrait
+
+
+def test_lot_and_pile_reports(tmp_path):
+    """The lot / pad and pile packages use the same report style: A4 report pages and landscape drawing sheets."""
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    import synthetic_site as site
+    from fieldortho.core import earthworks_report as er
+    jd = site.synthetic_job(str(tmp_path / "jobs"))
+    X, Y = site.X0, site.Y0
+    pad = [(X + 10, Y - 60), (X + 40, Y - 58), (X + 42, Y - 90), (X + 12, Y - 92)]
+    d = ew.PadDesign(level_mode="balanced", sides="slopes", cut_ratio=1.5, fill_ratio=2.0)
+    for kind, pts, kw, src in (("pad", pad, {"design": d}, "dtm"),
+                               ("pile", [(X + 25, Y - 25), (X + 75, Y - 25), (X + 75, Y - 75), (X + 25, Y - 75)],
+                                {"pile": {"reference": "edge", "swell_pct": 25}}, "dsm")):
+        plan = ew.plan_dict(type=kind, name=f"Test {kind}", source=src, points=[list(p) for p in pts], **kw)
+        dem = os.path.join(jd, "GIS", f"site_{src.upper()}.tif")
+        t = ew.run_plan(plan, dem)
+        files = er.export_package(t, plan, dem, None, str(tmp_path / kind), "EPSG:3125",
+                                  {"project": "Test", "paper": "a4", "show_elev": True}, None, ("kml",))
+        pages = _pages([f for f in files if f.endswith("_report.pdf")][0])
+        assert pages[0] == (595, 842) and (842, 595) in pages
+        sheets = pages.count((842, 595))
+        assert sheets == (1 if kind == "pile" else 1 + len(dsh.xs_sheets(
+            dsh.lot_sections(__import__("fieldortho.core.pad_sections", fromlist=["x"]).sections(t, pts, d)[0]),
+            dsh.Ctx(PAPERS["a4"], "", "", False, None, [], lot=True))))
+    hdr, rows, _g = __import__("fieldortho.core.lot_report", fromlist=["x"]).corner_rows(t, pts, "EPSG:3125", True)
+    assert len(rows) == 4 and hdr[-1] == "Finished (m)"
