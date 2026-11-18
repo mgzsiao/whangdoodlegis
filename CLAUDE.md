@@ -201,8 +201,14 @@ If a Windows fix seems to need changing these, stop and explain to the owner fir
     after tightening the band to the grade limit (`_within_band`, forward + backward pass), so the grade limit
     always holds; stations still outside are warned ("Fill higher than your limit" / "Cut deeper ...") and listed.
     The flat-in-cut check now runs for every road (rd.min_grade).
-  - E superelevation
-    (AASHTO Method 5, emax 6%), widening (AASHTO, SU truck), AASHTO 1993 rigid check; F canal model + design flow
+  - E done: `core/superelevation.py` (Method 5 e, never below NC; runoff L_r = lane x e / Δ (Table 3-15), runout,
+    2/3 of runoff before the curve, rotation about the centre line; SU widening on the inside, built up over the
+    runoff). `RoadDesign.superelevation / emax (6%) / widen` (pre-1.2 plans: off). Stations carry e_left / e_right
+    (% falling outward, negative = rising) and widen / widen_side; `road.station_side()` gives each half's shape
+    for template / side_profile; PCCP and aggregate areas include the widening. `core/pavement.py`: AASHTO 1993
+    rigid equation solved for D (Guide example 9.72 in), `RoadDesign.aashto` (empty = not checked), GUI box on the
+    pavement layers step. Design speed now chosen on the standard step (used by curves and vertical curves).
+  - F canal model + design flow
     by the Rational Method (show the owner the runoff-coefficient table and its source first); G new report
     (B + C style, ReportLab, plan + profile sheet, two-column cross-sections, A4/A3 + long bond, quantities only,
     editable signatories); H tests, methods pages, 1.2.0 installers.
