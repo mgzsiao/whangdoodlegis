@@ -192,6 +192,24 @@ def topics() -> list[tuple[str, str, str]]:
                  "against the smallest radius (30 m; 50 m for Tourism roads, DPWH D.O. 112 s. 2019; the designer "
                  "may type another value): tighter or shrunk curves are warned about and marked in the report's "
                  "curve table."),
+            _sec("Superelevation and widening on curves",
+                 "Superelevation e (AASHTO 2018, Method 5): side friction f and e share the work along a parabola so "
+                 "e reaches its maximum exactly at the smallest radius; never below the normal crown (NC):",
+                 _f("R_min = V² / (127 (e_max + f_max))     e = V² / (127 R) − f(R)",
+                    "runoff L_r = lane width × e / Δ     runout L_t = crown / e × L_r"),
+                 "f_max and Δ (relative gradient) from the speed (Tables 3-7, 3-15); the road rotates about the "
+                 "centre line, two thirds of the runoff before the curve. Widening on the inside of the curve for "
+                 "the SU truck (6-wheeler: wheelbase 6.1 m, front overhang 1.2 m, track 2.44 m):",
+                 _f("w = 2 (U + C) + F_A + Z − W     U = u + R − √(R² − L²)     F_A = √(R² + A (2L + A)) − R",
+                    "Z = 0.1 V / √R     C = lane width − u"),
+                 "built up over the same length as the runoff. The cross-sections, the PCCP and aggregate "
+                 "quantities and the cut and fill use the tilted, widened road."),
+            _sec("Concrete thickness (AASHTO 1993)", "Optional check of the PCCP thickness for the traffic:",
+                 _f("log W18 = Z_R S0 + 7.35 log(D + 1) − 0.06 + log(ΔPSI / 3) / (1 + 1.624×10⁷ / (D + 1)^8.46)",
+                    "        + (4.22 − 0.32 p_t) log[ S'c Cd (D^0.75 − 1.132) / (215.63 J (D^0.75 − 18.42 / (Ec / k)^0.25)) ]"),
+                 "solved for D (inches; MPa × 145.04 = psi, MPa/m × 3.684 = pci) and rounded up to 10 mm. Checked "
+                 "against the Guide's example (5.1 million ESAL ... gives 9.72 in; the Guide's chart reads 10.0 in). "
+                 "Source: AASHTO Guide for Design of Pavement Structures (1993)."),
             _sec("Road height", _list(
                 "Follow the ground: the ground is smoothed (moving average over twice the station spacing, at "
                 "least 20 m) and grades are limited forward and backward to the steepest grade.",

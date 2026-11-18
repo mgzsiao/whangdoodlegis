@@ -319,16 +319,23 @@ def section_data(r: rdm.RoadResult, rd: rdm.RoadDesign | None = None) -> list[xd
             info += [("Ground level", f"{s.ground:.3f} m"),
                      ("On grade at centre" if abs(s.depth) < 0.0005 else
                       "Cut at centre" if s.depth > 0 else "Fill at centre", f"{abs(s.depth):.3f} m")]
+        if s.e_left == s.e_left and (abs(s.e_left - rd.crown_pct) > 1e-9 or abs(s.e_right - rd.crown_pct) > 1e-9
+                                     or s.widen > 0):
+            info += [("Superelevation e", f"{max(abs(s.e_left), abs(s.e_right)):.2f}% toward the "
+                      f"{'left' if s.e_left > s.e_right else 'right'}"),
+                     ("Widening w", f"{s.widen:.2f} m {('L' if s.widen_side == 'L' else 'R') if s.widen else ''}")]
         slopes = []
         for sign in (-1, 1):
-            slopes.append((0, sign * w2, xd.slope_text(rd.crown_pct)))
+            sd = rdm.station_side(rd, s, sign)
+            h = sd.half(rd)
+            slopes.append((0, sign * sd.w2, xd.slope_text(sd.slope)))
             if rd.shoulders:
-                slopes.append((sign * w2, sign * rd.half, xd.slope_text(rd.shoulder_pct)))
+                slopes.append((sign * sd.w2, sign * h, xd.slope_text(sd.sh_slope)))
             catch = s.right_catch if sign > 0 else s.left_catch
-            zh = np.interp(sign * rd.half, s.offsets, np.where(np.isfinite(s.design_xs), s.design_xs, np.nan))
-            gh = np.interp(sign * rd.half, s.offsets, s.ground_xs)
+            zh = np.interp(sign * h, s.offsets, np.where(np.isfinite(s.design_xs), s.design_xs, np.nan))
+            gh = np.interp(sign * h, s.offsets, s.ground_xs)
             cut = bool(np.isfinite(gh) and np.isfinite(zh) and gh > zh)
-            start = rd.half + (rd.ditch_d + rd.ditch_w if cut and rd.ditch else 0.0)
+            start = h + (rd.ditch_in * rd.ditch_d + rd.ditch_w if cut and rd.ditch else 0.0)
             if abs(catch) > start + 0.5:
                 slopes.append((sign * start, catch, xd.ratio_text(rd.cut_ratio if cut else rd.fill_ratio, cut)))
         out.append(xd.SectionData(f"STA. {s.label}", s.offsets, s.ground_xs, s.design_xs, s.ground, s.design,

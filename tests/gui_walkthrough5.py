@@ -122,10 +122,14 @@ for key in ("carriage", "shoulders", "layers", "ditch", "slopes"):
         shot("54b_road_layers_changed")
         P.r_pccp.setValue(200)
         P._toggle_change()
+        P.aa_on.setChecked(True)                  # AASHTO 1993 check with the example traffic
+        assert "needs 150 mm" in P.aa_result.text() and "is enough" in P.aa_result.text(), P.aa_result.text()
+        shot("54c_road_layers_aashto")
         assert not form.editing and P.r_pccp.isHidden() and form.shown[0].text() == "200 mm"
     shot(f"54_road_{key}")
 P.next()
 assert P.step() == "curves" and P.curve_rows, "one bend expected"
+assert " e " in P.curve_rows[0][3].text() and "widening" in P.curve_rows[0][3].text(), P.curve_rows[0][3].text()
 pump()
 shot("51b_road_curves")
 assert m.preview_al is not None and len(m.preview_al.curves) == 1
@@ -165,6 +169,8 @@ shot("55_road_results")
 r = P.takeoff
 ref = rdm.design_road(m._dem_path(), line, P.road_design())
 assert len(r.alignment.curves) == 1 and r.standard == "fmr"
+assert r.supers and any(st.widen > 0 for st in r.stations), "curve widening expected"
+assert any(t == "Pavement thickness check" and "is enough" in v for t, v in r.inputs), r.inputs
 print("warnings:", r.warnings)
 m.road_profile.set_mode("mass")
 shot("55b_road_mass_haul")

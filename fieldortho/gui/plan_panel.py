@@ -453,6 +453,21 @@ class PlanPanel(QWidget):
                 rb.setChecked(True)
             rb.toggled.connect(self._tight_changed)
         self.r_min_radius.valueChanged.connect(self._min_radius_changed)
+        lay.addWidget(label("Tilt and widening on curves", "H2"))
+        lay.addWidget(self.se_on)
+        row = QHBoxLayout()
+        row.setContentsMargins(24, 0, 0, 0)
+        row.addWidget(QLabel("Maximum tilt (superelevation)"))
+        row.addWidget(self.emax)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(self.wd_on)
+        lay.addWidget(explain("On a bend the road tilts toward the inside (superelevation, e) so vehicles do not "
+                              "slide outward, and the lanes get wider on the inside (widening, w) because a truck's "
+                              "rear wheels cut the corner. The app works both out for each bend from the design "
+                              "speed and the radius (AASHTO 2018, Method 5; 6-wheeler SU truck) and builds them up "
+                              "gradually before and after the curve. NC = normal crown: the bend is gentle enough "
+                              "to keep the ordinary cross slope."))
         lay.addWidget(label("Each bend", "H2"))
         self.curve_box = QVBoxLayout()
         self.curve_box.setSpacing(4)
@@ -475,6 +490,17 @@ class PlanPanel(QWidget):
             self._tight_changed(True)
         elif hasattr(self, "curve_rows"):
             self._curves_changed()
+
+    def _ew_text(self, radius: float) -> str:
+        from ..core import superelevation as se
+        sp = int(self.vc_speed.currentData() or 30)
+        parts = []
+        if self.se_on.isChecked():
+            e = se.design_e(radius, sp, self.emax.value(), self.r_crown.value())
+            parts.append("e NC" if e <= self.r_crown.value() + 1e-9 else f"e {e:.1f}%")
+        if self.wd_on.isChecked():
+            parts.append(f"widening {se.widening(radius, sp, self.r_width.value()):.2f} m")
+        return (" " + ", ".join(parts) + f" at {sp} km/h.") if parts else ""
 
     def _min_radius_note(self):
         std = rdm.STANDARDS.get(self.r_std.currentData() or "")
@@ -571,7 +597,8 @@ class PlanPanel(QWidget):
                 st.setText("\u26A0 Very tight: long trucks may not get around.")
                 st.setObjectName("Warn")
             else:
-                st.setText(f"\u2714 Curve {c.length:.1f} m long, starts {c.tangent:.1f} m before the bend.")
+                st.setText(f"\u2714 Curve {c.length:.1f} m long, starts {c.tangent:.1f} m before the bend."
+                           + self._ew_text(c.radius))
                 st.setObjectName("Good")
             theme.repolish(st)
         self.page.show_alignment(al)
@@ -708,13 +735,8 @@ class PlanPanel(QWidget):
         for b in (self.vc_yes, self.vc_no):
             b.toggled.connect(self._vc_changed)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Design speed"))
-        self.vc_speed = QComboBox()
-        for v in vt.SPEEDS:
-            self.vc_speed.addItem(f"{v} km/h", v)
-        self.vc_speed.setCurrentIndex(self.vc_speed.findData(30))
-        self.vc_speed.currentIndexChanged.connect(self._vc_speed_changed)
-        row.addWidget(self.vc_speed)
+        self.vc_speed_here = label("", "")
+        row.addWidget(self.vc_speed_here)
         row.addStretch(1)
         lay.addLayout(row)
         self.vc_speed_note = label("", "Hint", wrap=True)
@@ -774,6 +796,10 @@ class PlanPanel(QWidget):
         self._pvis_auto = True
         self._pvis: list = []
 
+    def _vc_speed_label(self):
+        self.vc_speed_here.setText(f"Design speed: <b>{self.vc_speed.currentData()} km/h</b> "
+                                   "(chosen with the road standard)")
+
     def _vc_speed_default(self):
         std = rdm.STANDARDS.get(self.r_std.currentData() or "") if hasattr(self, "r_std") else None
         if std and not getattr(self, "_vc_speed_set", False):
@@ -804,11 +830,14 @@ class PlanPanel(QWidget):
     def _vc_speed_changed(self, _i):
         self._vc_speed_set = True
         self._fill_k_table()
+        self._vc_speed_label()
+        if hasattr(self, "curve_rows"):
+            self._curves_changed()
         self._changed()
 
     def _vc_changed(self, *_):
         on = self.vc_yes.isChecked()
-        for w_ in (self.vc_speed, self.pvi_table, self.k_table, self.vc_min):
+        for w_ in (self.pvi_table, self.k_table, self.vc_min):
             w_.setEnabled(on)
         self._changed()
 
@@ -962,6 +991,23 @@ class PlanPanel(QWidget):
         # the smallest curve radius (curves step) follows the standard: 30 m, 50 m for Tourism roads
         self.r_min_radius = spin(0, 500, 30, " m", 0, 5, 110)
         self.r_min_radius.setSpecialValueText("no check")
+        self.vc_speed = QComboBox()
+        for v in vt.SPEEDS:
+            self.vc_speed.addItem(f"{v} km/h", v)
+        self.vc_speed.setCurrentIndex(self.vc_speed.findData(30))
+        self.vc_speed.currentIndexChanged.connect(self._vc_speed_changed)
+        # curves: superelevation and widening (AASHTO 2018)
+        self.se_on = QCheckBox("Tilt the road on curves (superelevation)")
+        self.se_on.setChecked(True)
+        self.emax = spin(2, 12, 6, " %", 1, 0.5, 110)
+        self.wd_on = QCheckBox("Widen the road on curves (for a 6-wheeler truck)")
+        self.wd_on.setChecked(True)
+        for w_ in (self.se_on, self.wd_on):
+            w_.toggled.connect(lambda _v: self._curves_changed())
+        self.emax.valueChanged.connect(lambda _v: self._curves_changed())
+        # AASHTO 1993 thickness check (pavement layers step)
+        self.aa_on = QCheckBox("Check the concrete thickness with the AASHTO 1993 method")
+        self.aa = {}
         self.part_rows = {
             "carriage": [("Width, both lanes", self.r_width, "width", 1, " m", "the part vehicles drive on, edge to edge"),
                          ("Cross slope from the centre", self.r_crown, "crown_pct", 1, "%",
@@ -999,6 +1045,12 @@ class PlanPanel(QWidget):
         row.addWidget(QLabel("Road standard"))
         row.addWidget(self.r_std, 1)
         lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Design speed"))
+        row.addWidget(self.vc_speed)
+        row.addWidget(label("sets the tilt and widening on curves and the vertical curve lengths", "Hint",
+                            wrap=True), 1)
+        lay.addLayout(row)
         lay.addWidget(self.std_note)
         self.preview = TemplatePreview()
         lay.addWidget(self.preview)
@@ -1012,6 +1064,70 @@ class PlanPanel(QWidget):
         page, src, warn = rp.part_page(key, prev, form)
         lay.addWidget(page)
         self.part_forms[key], self.part_prev[key], self.part_src[key], self.part_warn[key] = form, prev, src, warn
+        if key == "layers":
+            self._aashto_box(lay)
+
+    AA_FIELDS = (("esal_m", "Traffic, design life (ESAL)", " M", 0.01, 500, 2, 0.1),
+                 ("k_mpa_m", "Support k on the subbase", " MPa/m", 5, 300, 0, 5),
+                 ("sc_mpa", "Flexural strength S'c", " MPa", 2, 8, 2, 0.1),
+                 ("ec_mpa", "Concrete modulus Ec", " MPa", 10000, 50000, 0, 500),
+                 ("j", "Load transfer J", "", 2, 4.5, 2, 0.1),
+                 ("cd", "Drainage Cd", "", 0.7, 1.3, 2, 0.05),
+                 ("s0", "Standard deviation S0", "", 0.2, 0.5, 2, 0.01),
+                 ("p0", "Serviceability, new p0", "", 3.5, 5, 1, 0.1),
+                 ("pt", "Serviceability, end pt", "", 1.5, 3.5, 1, 0.1))
+
+    def _aashto_box(self, lay):
+        from ..core import pavement as pv
+        lay.addWidget(self.aa_on)
+        self.aa_box = QWidget()
+        g = QGridLayout(self.aa_box)
+        g.setContentsMargins(24, 0, 0, 0)
+        g.setColumnStretch(0, 1)
+        g.setVerticalSpacing(4)
+        d = pv.Inputs()
+        g.addWidget(QLabel("Reliability"), 0, 0)
+        self.aa["reliability"] = QComboBox()
+        for r_ in sorted(pv.ZR):
+            self.aa["reliability"].addItem(f"{r_}%", r_)
+        self.aa["reliability"].setCurrentIndex(self.aa["reliability"].findData(d.reliability))
+        self.aa["reliability"].currentIndexChanged.connect(lambda _i: self._aa_changed())
+        g.addWidget(self.aa["reliability"], 0, 1)
+        for i, (k, cap, unit, lo, hi, dec, st) in enumerate(self.AA_FIELDS, start=1):
+            g.addWidget(label(cap, "", wrap=True), i, 0)
+            self.aa[k] = spin(lo, hi, getattr(d, k), unit, dec, st, 115)
+            self.aa[k].valueChanged.connect(lambda _v: self._aa_changed())
+            g.addWidget(self.aa[k], i, 1)
+        lay.addWidget(self.aa_box)
+        self.aa_result = label("", "", wrap=True)
+        lay.addWidget(self.aa_result)
+        lay.addWidget(label("Starting values are an example for a low-traffic road. Use your project's traffic count "
+                            "and soil test (CBR / k) values. Source: " + pv.SOURCE + ".", "Hint", wrap=True))
+        self.aa_on.toggled.connect(lambda _v: self._aa_changed())
+        self.r_pccp.valueChanged.connect(lambda _v: self._aa_changed())
+        self._aa_changed()
+
+    def _aa_inputs(self):
+        from ..core import pavement as pv
+        if not self.aa_on.isChecked():
+            return None
+        vals = {k: w.value() for k, w in self.aa.items() if k != "reliability"}
+        return pv.Inputs(reliability=int(self.aa["reliability"].currentData()), **vals)
+
+    def _aa_changed(self):
+        from ..core import pavement as pv
+        on = self.aa_on.isChecked()
+        self.aa_box.setVisible(on)
+        p_ = self._aa_inputs()
+        if p_ is None:
+            self.aa_result.setText("")
+        else:
+            n = pv.needed_mm(p_)
+            ok = n == n and self.r_pccp.value() + 1e-6 >= n
+            self.aa_result.setText(pv.summary(p_, self.r_pccp.value()))
+            self.aa_result.setStyleSheet(f"color: {theme.OK if ok else theme.WARN}; font-weight: 600;")
+        if hasattr(self, "pgroup"):
+            self._changed()
 
     def _toggle_change(self):
         f = self.part_forms.get(self.step())
@@ -1127,6 +1243,8 @@ class PlanPanel(QWidget):
             fill_ratio=self.r_fill.value(), swell_pct=self.swell.value(), shrink_pct=self.shrink.value(),
             truck_m3=self.truck.value(), radii=self.curve_radii(), standard=self.r_std.currentData() or "",
             min_radius=self.r_min_radius.value(), vc_min=self.vc_min.value(),
+            superelevation=self.se_on.isChecked(), emax=self.emax.value(), widen=self.wd_on.isChecked(),
+            aashto=self._aa_inputs().as_dict() if self.aa_on.isChecked() else {},
             vcurves=self.vc_yes.isChecked(), speed=int(self.vc_speed.currentData() or 30),
             pvis=[list(q) for q in self._pvis] if not self._pvis_auto else [], pvis_auto=self._pvis_auto)
 
@@ -1259,6 +1377,9 @@ class PlanPanel(QWidget):
         if key == "vcurves":
             self._vc_speed_default()
             self._fill_k_table()
+            self._vc_speed_label()
+        if key == "std":
+            self._vc_speed_default()
         if key == "std":
             self.preview.set_design(self.road_design())
         if key == "height":
@@ -1916,6 +2037,18 @@ class PlanPanel(QWidget):
         self.r_min_radius.setValue(rd.min_radius)
         self.r_min_radius.blockSignals(False)
         self.vc_min.setValue(rd.vc_min)
+        self.se_on.setChecked(rd.superelevation)
+        self.emax.setValue(rd.emax)
+        self.wd_on.setChecked(rd.widen)
+        from ..core import pavement as pv
+        p_ = pv.from_dict(rd.aashto)
+        self.aa_on.setChecked(p_ is not None)
+        if p_ is not None:
+            for k, w in self.aa.items():
+                if k == "reliability":
+                    w.setCurrentIndex(max(0, w.findData(int(p_.reliability))))
+                else:
+                    w.setValue(getattr(p_, k))
         self._std_note()
         self.swell.setValue(rd.swell_pct)
         self.shrink.setValue(rd.shrink_pct)

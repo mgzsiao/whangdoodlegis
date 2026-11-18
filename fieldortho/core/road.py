@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
-from . import alignment as alm, earthworks as ew, measure as ms, vertical as vt
+from . import alignment as alm, earthworks as ew, measure as ms, pavement as pv, superelevation as se, vertical as vt
 from .terrain import Dem
 
 MAX_SIDE = 60.0           # metres beyond the shoulder that a side slope is followed
@@ -104,6 +104,10 @@ class RoadDesign:
     pvis: list = field(default_factory=list)         # [[station, elevation, length (0 = from speed)], ...]
     pvis_auto: bool = True                           # PVIs proposed by the app (again at every change)
     vc_min: float = 60.0                             # shortest vertical curve, PVC to PVT (office rule)
+    superelevation: bool = True                      # tilt the road on curves (AASHTO Method 5)
+    emax: float = 6.0                                # % maximum superelevation
+    widen: bool = True                               # widen the carriageway on curves (AASHTO, SU truck)
+    aashto: dict = field(default_factory=dict)       # AASHTO 1993 thickness check inputs (empty = not checked)
 
     @property
     def half(self) -> float:
@@ -141,6 +145,10 @@ class Station:
     pccp_vol: float = 0.0         # from the previous station to this one
     agg_vol: float = 0.0
     cut_side: tuple = (False, False)          # (left, right) side in cut
+    e_left: float = float("nan")              # % cross slope of the carriageway, falling outward (- = rising)
+    e_right: float = float("nan")
+    widen: float = 0.0                        # m added to the carriageway on the inside of a curve
+    widen_side: str = ""                      # "L" | "R" | ""
     offsets: np.ndarray | None = field(default=None, repr=False)
     ground_xs: np.ndarray | None = field(default=None, repr=False)
     design_xs: np.ndarray | None = field(default=None, repr=False)     # NaN outside the works
@@ -188,6 +196,7 @@ class RoadResult:
     pccp_area: float = 0.0                                           # m² of concrete surface
     agg_vol: float = 0.0                                             # m³ aggregate subbase incl. shoulders
     min_radius: float = 0.0                                          # smallest radius used for the checks
+    supers: list = field(default_factory=list)                       # superelevation.CurveSuper per curve
 
     @property
     def net(self) -> float:
@@ -367,12 +376,38 @@ def _within_band(z, d, lo, hi, g):
 
 
 # ============================================================================ cross-sections
-def template(u: np.ndarray, zc: float, rd: RoadDesign, earthwork: bool) -> np.ndarray:
-    """Road surface (or, earthwork=True, the bottom of the pavement) across one side, u = 0..hinge."""
-    w2 = rd.width / 2
-    z = zc - rd.crown_pct / 100 * np.minimum(u, w2)
+@dataclass
+class SideShape:
+    """One half of the road across: carriageway cross slope (% falling outward; negative on the high side of a
+    superelevated curve), carriageway half width (with widening on the inside of a curve), shoulder slope."""
+    slope: float
+    w2: float
+    sh_slope: float
+
+    def half(self, rd: "RoadDesign") -> float:
+        return self.w2 + (rd.shoulder_w if rd.shoulders else 0.0)
+
+
+def normal_side(rd: "RoadDesign") -> SideShape:
+    return SideShape(rd.crown_pct, rd.width / 2, rd.shoulder_pct)
+
+
+def station_side(rd: "RoadDesign", st: "Station", side: int) -> SideShape:
+    """The shape of the left (-1) or right (+1) half at a station (superelevation and widening applied)."""
+    e = st.e_left if side < 0 else st.e_right
+    if e != e:
+        return normal_side(rd)
+    w = st.widen if st.widen_side == ("L" if side < 0 else "R") else 0.0
+    # shoulders: on the low side at least as steep as the carriageway; on the high side they fall outward
+    return SideShape(e, rd.width / 2 + w, max(rd.shoulder_pct, e) if e > 0 else rd.shoulder_pct)
+
+
+def template(u: np.ndarray, zc: float, rd: RoadDesign, earthwork: bool, side: SideShape | None = None) -> np.ndarray:
+    """Road surface (or, earthwork=True, the bottom of the subbase) across one side, u = 0..hinge."""
+    sd = side or normal_side(rd)
+    z = zc - sd.slope / 100 * np.minimum(u, sd.w2)
     if rd.shoulders:
-        z = z - rd.shoulder_pct / 100 * np.clip(u - w2, 0, rd.shoulder_w)
+        z = z - sd.sh_slope / 100 * np.clip(u - sd.w2, 0, rd.shoulder_w)
     if earthwork and rd.pavement_t > 0:
         z = z - rd.pavement_t
     return z
@@ -390,7 +425,7 @@ def _crossing(u, line, g, hit):
     return float(u[k])
 
 
-def side_profile(u: np.ndarray, g: np.ndarray, zc: float, rd: RoadDesign):
+def side_profile(u: np.ndarray, g: np.ndarray, zc: float, rd: RoadDesign, side: SideShape | None = None):
     """Design (the bottom of the earthworks) across one side, u outward from the centre, ground g there.
     Returns (design, catch u, limited, cut): catch = outer edge of the works (of the toe ditch if there is one).
 
@@ -398,12 +433,13 @@ def side_profile(u: np.ndarray, g: np.ndarray, zc: float, rd: RoadDesign):
     goes down the road side of the ditch, along its bottom and up the cut slope. On fill the side slope
     runs down from the shoulder edge; the layers end on it, so the embankment top is the subgrade level
     out to where the slope passes below it (the sloped layer edge is aggregate, not embankment)."""
-    uh = rd.half
-    z_h = template(np.array([uh]), zc, rd, False)[0]
+    sd = side or normal_side(rd)
+    uh = sd.half(rd)
+    z_h = template(np.array([uh]), zc, rd, False, sd)[0]
     T = rd.pavement_t
     D = np.full(u.shape, np.nan)
     inside = u <= uh + 1e-9
-    D[inside] = template(u[inside], zc, rd, True)
+    D[inside] = template(u[inside], zc, rd, True, sd)
     out = ~inside
     gi = np.interp(uh, u, g) if np.isfinite(g).any() else np.nan
     if not np.isfinite(gi):
@@ -446,14 +482,15 @@ def side_profile(u: np.ndarray, g: np.ndarray, zc: float, rd: RoadDesign):
     return D, float(catch), limited, bool(cut)
 
 
-def layer_areas(rd: RoadDesign, fill_sides: int) -> tuple[float, float]:
+def layer_areas(rd: RoadDesign, fill_sides: int, widen: float = 0.0) -> tuple[float, float]:
     """(PCCP, aggregate) cross-section areas in m² for the whole section. Layers are parallel to the
-    surface, so the areas are thickness x width; on each fill side the sloped layer edge adds a triangle of
-    T x (fill_ratio x T) / 2 (the side slope from the shoulder edge to the subgrade)."""
-    pccp = rd.pccp_t * rd.width
+    surface, so the areas are thickness x width (the carriageway widened on curves); on each fill side the
+    sloped layer edge adds a triangle of T x (fill_ratio x T) / 2 (the side slope from the shoulder edge to
+    the subgrade)."""
+    pccp = rd.pccp_t * (rd.width + widen)
     sh = rd.shoulder_w if rd.shoulders else 0.0
     T = rd.pavement_t
-    agg = rd.subbase_t * 2 * rd.half + rd.pccp_t * 2 * sh + fill_sides * 0.5 * rd.fill_ratio * T * T
+    agg = rd.subbase_t * (2 * rd.half + widen) + rd.pccp_t * 2 * sh + fill_sides * 0.5 * rd.fill_ratio * T * T
     return float(pccp), float(agg)
 
 
@@ -480,16 +517,20 @@ def _areas(u, g, D, catch, step_at=None):
 
 
 def section(dem: Dem, st: Station, rd: RoadDesign, step: float):
-    reach = rd.half + MAX_SIDE
-    u = np.union1d(np.arange(0, reach + step / 2, step), [rd.half])      # always a sample at the shoulder edge
-    z_edge = template(np.array([rd.half]), st.design, rd, False)[0]
+    shapes = {s_: station_side(rd, st, s_) for s_ in (-1, 1)}
+    halves = [shapes[s_].half(rd) for s_ in (-1, 1)]
+    reach = max(halves) + MAX_SIDE
+    u = np.union1d(np.arange(0, reach + step / 2, step), halves)       # always a sample at the shoulder edges
     rx, ry = st.ty, -st.tx                      # right-hand normal
     res = {}
     for side, (nx, ny) in ((1, (rx, ry)), (-1, (-rx, -ry))):
         g = ms.sample(dem, st.x + nx * u, st.y + ny * u)
-        D, catch, lim, cut = side_profile(u, g, st.design, rd)
+        sd = shapes[side]
+        D, catch, lim, cut = side_profile(u, g, st.design, rd, sd)
         # in cut the layers stand against the side: a vertical step at the shoulder edge, up to the surface
-        step_at = (rd.half, z_edge) if rd.pavement_t > 0 and cut else None
+        h = sd.half(rd)
+        z_edge = template(np.array([h]), st.design, rd, False, sd)[0]
+        step_at = (h, z_edge) if rd.pavement_t > 0 and cut else None
         ca, fa = _areas(u, g, D, catch, step_at)
         res[side] = (g, D, catch, lim, ca, fa, cut)
     gl, Dl, cl, ll, cal, fal, cutl = res[-1]
@@ -498,7 +539,7 @@ def section(dem: Dem, st: Station, rd: RoadDesign, step: float):
     st.left_catch, st.right_catch = -cl, cr
     st.side_limit = ll or lr
     st.cut_side = (cutl, cutr)
-    st.pccp_area, st.agg_area = layer_areas(rd, (not cutl) + (not cutr))
+    st.pccp_area, st.agg_area = layer_areas(rd, (not cutl) + (not cutr), st.widen)
     # one array across the whole section, left to right (for drawing and the tables)
     w = max(cl, cr) + max(3.0, 0.25 * max(cl, cr))
     keep = u <= w
@@ -535,8 +576,11 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
     sx, sy = np.array([s.x for s in stations]), np.array([s.y for s in stations])
     sg = ms.sample(dem, sx, sy)
     sz = vt.heights(sd, pvis, vcs) if rd.vcurves else np.interp(sd, dd, dz)
+    sups = se.for_curves(al.curves, rd.speed, rd.emax, rd.crown_pct, rd.width, rd.superelevation, rd.widen) \
+        if (rd.superelevation or rd.widen) else []
     for st, g, z in zip(stations, sg, sz):
         st.ground, st.design = float(g), float(z)
+        st.e_left, st.e_right, st.widen, st.widen_side = se.at_station(sups, st.s, rd.crown_pct)
         section(dem, st, rd, step)
     k = 1 + rd.shrink_pct / 100
     cc = cf = cp = ca = 0.0
@@ -593,6 +637,12 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
               ("Vertical curves", vtxt), ("Road shape", shape),
               ("Pavement layers", f"PCCP {rd.pccp_t * 1000:.0f} mm on aggregate subbase {rd.subbase_t * 1000:.0f} mm "
                                   "(earthworks stop below the subbase)" if rd.pavement_t > 0 else "none"),
+              ("Pavement thickness check", pv.summary(pv.from_dict(rd.aashto), rd.pccp_t * 1000) + f" ({pv.SOURCE})"
+               if rd.aashto else "not done"),
+              ("Curves: superelevation and widening",
+               (f"superelevation up to {rd.emax:g}% (AASHTO Method 5)" if rd.superelevation else "no superelevation")
+               + (f"; widening for the {se.SU['name']}" if rd.widen else "; no widening")
+               + f"; design speed {rd.speed} km/h" + (f" ({se.SOURCE})" if rd.superelevation or rd.widen else "")),
               ("Side slopes", f"{soil}: cut {rd.cut_ratio:g} : 1, fill {rd.fill_ratio:g} : 1 (out : up)"),
               ("Soil loosening when excavated (swell)", f"{rd.swell_pct:g}%"),
               ("Extra soil for packed fill (shrink)", f"{rd.shrink_pct:g}%")]
@@ -604,7 +654,9 @@ def design_road(path: str, pts, rd: RoadDesign, max_cells: int = ms.MAX_CELLS) -
                       float(-np.nanmin(depth)) if np.isfinite(depth).any() else 0.0,
                       sum(s.side_limit for s in stations), int((~np.isfinite(sg)).sum()), dem.crs_wkt, dem.cell,
                       al, cxy, warn, rd.standard, pvis, vcs, rd.speed if rd.vcurves else 0,
-                      pccp_vol=cp, pccp_area=rd.width * float(sd[-1]) if rd.pccp_t > 0 else 0.0, agg_vol=ca,
+                      pccp_vol=cp, pccp_area=(sum((a.widen + b.widen) / 2 * (b.s - a.s)
+                                                  for a, b in zip(stations, stations[1:])) + rd.width * float(sd[-1]))
+                      if rd.pccp_t > 0 else 0.0, agg_vol=ca, supers=sups,
                       min_radius=rd.min_radius or float((STANDARDS.get(rd.standard) or {}).get("min_radius", 0.0)))
 
 
@@ -713,7 +765,7 @@ def design_from(plan: dict) -> RoadDesign:
     if raw and "ditch_in" not in raw:
         raw["ditch_in"] = 1.0
     for k, old in (("ditch_w", 0.5), ("cut_ratio", 1.0), ("fill_ratio", 1.5), ("vc_min", 0.0), ("max_fill", 0.0),
-                   ("max_cut", 0.0), ("min_grade", 0.0)):
+                   ("max_cut", 0.0), ("min_grade", 0.0), ("superelevation", False), ("widen", False)):
         if raw and k not in raw:
             raw[k] = old
     return RoadDesign(**{k: v for k, v in raw.items() if k in RoadDesign.__dataclass_fields__})

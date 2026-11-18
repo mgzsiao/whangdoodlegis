@@ -35,7 +35,7 @@ LINE = [(X0 + 50, Y0 - 100), (X0 + 150, Y0 - 100)]          # 100 m west -> east
 
 def plain(**kw):
     d = dict(interval=10, start_mode="typed", profile="level", width=6, crown_pct=0, shoulders=False,
-             cut_ratio=1, fill_ratio=2, shrink_pct=0)
+             cut_ratio=1, fill_ratio=2, shrink_pct=0, superelevation=False, widen=False)
     d.update(kw)
     return rdm.RoadDesign(**d)
 
@@ -234,3 +234,29 @@ def test_fill_and_cut_limits(tmp_path):
         assert "Cut deeper than your limit" in titles
     # pre-1.2 plans have no limits
     assert rdm.design_from({"road": {"profile": "gentle"}}).max_cut == 0
+
+
+# ---------------------------------------------------------------- 1.2 stage E: superelevation and widening
+def test_superelevation_and_widening_on_a_curve(flat):
+    from fieldortho.core import superelevation as se
+    # R 30 m at 30 km/h, e_max 6%: Method 5 gives e = 5.66% -> 5.7%; SU widening for a 6 m road = 2.07 m
+    assert se.design_e(30, 30, 6, 0) == pytest.approx(5.7)
+    assert se.widening(30, 30, 6.0) == pytest.approx(2.0676, abs=1e-3)
+    assert se.design_e(se.r_min(30, 6) + 1e-6, 30, 6, 1.5) == pytest.approx(6.0)
+    assert se.design_e(2000, 30, 6, 1.5) == pytest.approx(1.5)                 # gentle bend: normal crown
+    pts = [(X0 + 40, Y0 - 160), (X0 + 40, Y0 - 60), (X0 + 140, Y0 - 60)]     # north, then a right turn
+    r = rdm.design_road(flat, pts, plain(start_z=101.0, radii=[30], superelevation=True, widen=True))
+    mid = [s for s in r.stations if 80 <= s.s <= 105]                     # full superelevation (runoff 22.8 m)
+    assert mid
+    # inside (right): falls 5.7% over 3 + 2.0676 m, then 2 : 1 fill; outside (left): rises 5.7% over 3 m
+    wi, e = 3 + 2.0676, 0.057
+    inner = wi - e / 2 * wi ** 2 + 0.5 * (2 * (1 - e * wi)) * (1 - e * wi)
+    outer = 3 + e / 2 * 9 + 0.5 * (2 * (1 + e * 3)) * (1 + e * 3)
+    for s in mid:
+        assert (s.e_left, s.e_right) == (pytest.approx(-5.7), pytest.approx(5.7)) and s.widen_side == "R"
+        assert s.widen == pytest.approx(2.0676, abs=1e-3)
+        assert s.fill_area == pytest.approx(inner + outer, rel=0.005)
+    # on the straights the road has its normal crown and width again
+    far = [s for s in r.stations if s.s < 40]
+    assert all((s.e_left, s.e_right, s.widen) == (0, 0, 0) for s in far)
+    assert r.supers and r.supers[0].e == pytest.approx(5.7) and not r.supers[0].left
